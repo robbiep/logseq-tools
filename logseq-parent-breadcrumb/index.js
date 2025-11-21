@@ -11,6 +11,8 @@ function main() {
     displayMode: 'full' // 'simple' or 'full'
   };
 
+
+
   /**
    * Creates the breadcrumb DOM element - Simple mode
    */
@@ -231,10 +233,12 @@ function main() {
   });
 
   // Initial update
-  setTimeout(updateBreadcrumb, 500);
+  setTimeout(updateBreadcrumb, 300);
 
   // Also update periodically to catch any missed changes
   setInterval(updateBreadcrumb, 2000);
+
+  console.log("Parent Breadcrumb: loaded");
 }
 
 // Bootstrap the plugin

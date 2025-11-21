@@ -1,16 +1,17 @@
 {
   "name": "logseq-parent-breadcrumb",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "main": "dist/index.js",
   "logseq": {
     "id": "logseq-parent-breadcrumb",
     "title": "Parent Breadcrumb"
   },
   "scripts": {
-    "build": "mkdir -p dist && cp index.js dist/index.js"
+    "build": "parcel build index.js --no-source-maps --no-minify --out-file index.js"
   },
-  "dependencies": {
-    "@logseq/libs": "^0.0.17"
+  "devDependencies": {
+    "@logseq/libs": "^0.0.17",
+    "parcel-bundler": "^1.12.5"
   },
   "license": "MIT"
 }
