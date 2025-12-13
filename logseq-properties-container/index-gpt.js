@@ -86,6 +86,40 @@ const main = async () => {
   user-select: none;
 }
 
+.prop-value-cell {
+  position: relative;
+}
+
+.prop-value-input {
+  width: 100%;
+}
+
+.prop-value-render {
+  padding: 4px 6px;
+  border: 1px solid var(--ls-border-color);
+  border-radius: 4px;
+  background: var(--ls-primary-background-color);
+  min-height: 26px;
+  cursor: text;
+}
+
+.prop-value-render:hover {
+  border-color: var(--ls-link-text-color);
+}
+
+/* BLURRED STATE */
+.prop-blurred .prop-value-input {
+  opacity: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+/* FOCUSED STATE */
+.prop-editing .prop-value-render {
+  display: none;
+}
+
+
   `);
 
   /********************
@@ -228,11 +262,13 @@ const main = async () => {
     <tr data-idx="${i}" draggable="true" class="prop-row">
       <td class="drag-handle">☰</td>
       <td><input class="enhanced-props-input prop-key" value="${p.key.replace(/"/g, '&quot;')}" /></td>
-      <td>
+      <td class="prop-value-cell">
         <div class="prop-value-container" data-idx="${i}">
           <input class="enhanced-props-input prop-value" value="${p.value.replace(/"/g, '&quot;')}" />
         </div>
       </td>
+
+
       <td><span class="enhanced-props-delete" data-idx="${i}">🗑</span></td>
     </tr>
   `).join('')}
