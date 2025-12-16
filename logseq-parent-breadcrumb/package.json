@@ -1,6 +1,6 @@
 {
   "name": "logseq-parent-breadcrumb",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "main": "dist/index.html",
   "logseq": {
     "id": "logseq-parent-breadcrumb",
