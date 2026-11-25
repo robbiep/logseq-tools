@@ -1,0 +1,9 @@
+{
+  "title": "logseq-mermaid-plugin",
+  "name": "logseq-mermaid-plugin",
+  "description": "Create mermaid diagrams in image format on-the-fly.",
+  "author": "benjypng",
+  "repo": "benjypng/logseq-mermaid-plugin",
+  "icon": "./icon.svg",
+  "effect": true
+}
