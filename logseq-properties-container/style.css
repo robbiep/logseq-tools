@@ -1,0 +1,110 @@
+.enhanced-props-container {
+    margin: 12px 0 16px 0;
+    padding: 12px;
+    background: var(--ls-secondary-background-color);
+    border-radius: 8px;
+    border: 1px solid var(--ls-border-color);
+}
+
+.enhanced-props-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.enhanced-props-table th {
+    text-align: left;
+    padding: 6px 8px;
+    font-weight: 600;
+    border-bottom: 1px solid var(--ls-border-color);
+}
+
+.enhanced-props-table td {
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--ls-border-color);
+}
+
+.enhanced-props-input {
+    width: 100%;
+    background: var(--ls-primary-background-color);
+    border: 1px solid var(--ls-border-color);
+    border-radius: 4px;
+    padding: 4px 6px;
+    font-family: inherit;
+    font-size: inherit;
+}
+
+.enhanced-props-input:focus {
+    outline: none;
+    border-color: var(--ls-link-text-color);
+}
+
+.enhanced-props-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.enhanced-props-btn {
+    padding: 4px 10px;
+    border-radius: 4px;
+    border: 1px solid var(--ls-border-color);
+    background: var(--ls-primary-background-color);
+    cursor: pointer;
+}
+
+.enhanced-props-btn-primary {
+    background: var(--ls-link-text-color);
+    color: white;
+    border-color: var(--ls-link-text-color);
+}
+
+.enhanced-props-delete {
+    cursor: pointer;
+    color: var(--ls-error-text-color);
+}
+
+.prop-row.dragging {
+    opacity: 0.4;
+}
+
+.prop-row.drag-over {
+    outline: 2px dashed var(--ls-link-text-color);
+}
+
+.drag-handle {
+    cursor: grab;
+    user-select: none;
+}
+
+.prop-value-cell {
+    position: relative;
+}
+
+.prop-value-input {
+    width: 100%;
+}
+
+.prop-value-render {
+    padding: 4px 6px;
+    border: 1px solid var(--ls-border-color);
+    border-radius: 4px;
+    background: var(--ls-primary-background-color);
+    min-height: 26px;
+    cursor: text;
+}
+
+.prop-value-render:hover {
+    border-color: var(--ls-link-text-color);
+}
+
+/* BLURRED STATE */
+.prop-blurred .prop-value-input {
+    opacity: 0;
+    height: 0;
+    pointer-events: none;
+}
+
+/* FOCUSED STATE */
+.prop-editing .prop-value-render {
+    display: none;
+}
