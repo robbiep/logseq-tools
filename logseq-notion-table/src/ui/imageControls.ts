@@ -116,7 +116,6 @@ export function openImageDimensionPopover(
   fields.append(wGroup, lockBtn, hGroup)
   pop.appendChild(fields)
 
-  // Presets row
   const presets = doc.createElement('div')
   presets.className = 'nt-img-pop-presets'
 
@@ -154,7 +153,6 @@ export function openImageDimensionPopover(
   presets.appendChild(origBtn)
   pop.appendChild(presets)
 
-  // Footer apply button
   const footer = doc.createElement('div')
   footer.className = 'nt-img-pop-footer'
 

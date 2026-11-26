@@ -417,7 +417,6 @@ export function matchesFilter(
     return op === 'not_contains' ? !matched : matched
   }
 
-  // Default: 'text'
   const needle = (typeof filter.value === 'string' ? filter.value : '').trim().toLowerCase()
   if (!needle) return true
   const searchable = extractSearchableText(raw)

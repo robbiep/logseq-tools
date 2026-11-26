@@ -926,7 +926,6 @@ export class TableView {
     }
     table.appendChild(colgroup)
 
-    // Header row
     const thead = this.doc.createElement('thead')
     const headTr = this.doc.createElement('tr')
     for (let c = 0; c < this.table.headers.length; c++) {
@@ -935,7 +934,6 @@ export class TableView {
     thead.appendChild(headTr)
     table.appendChild(thead)
 
-    // Body rows
     const tbody = this.buildTableBody(colgroup)
     table.appendChild(tbody)
     table.appendChild(this.buildCalcFooter())
@@ -4491,7 +4489,6 @@ export class TableView {
       return
     }
 
-    // Escape: commit & exit cell edit
     if (e.key === 'Escape') {
       e.preventDefault()
       e.stopPropagation()

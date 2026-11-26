@@ -60,7 +60,6 @@ export function openFilterPopover(
 
   stopEvents(pop, ['mousedown', 'mouseup', 'click', 'keydown', 'keyup', 'input', 'change'])
 
-  // Header
   const header = doc.createElement('div')
   header.className = 'nt-fp-header'
 

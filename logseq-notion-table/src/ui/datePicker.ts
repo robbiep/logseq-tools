@@ -164,7 +164,6 @@ export function openDatePicker(
 
   stopEvents(pop, ['mousedown', 'mouseup', 'click', 'keydown', 'keyup', 'input'])
 
-  // Plaintext date input
   const inputWrap = doc.createElement('div')
   inputWrap.className = 'nt-dp-input-wrap'
 
@@ -246,7 +245,6 @@ export function openDatePicker(
     }
   })
 
-  // Footer quick actions
   const footer = doc.createElement('div')
   footer.className = 'nt-dp-footer'
 
