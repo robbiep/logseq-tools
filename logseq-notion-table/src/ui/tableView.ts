@@ -176,7 +176,6 @@ export class TableView {
   private redoBtnEl: HTMLButtonElement | null = null
   private searchOpen = false
   private searchQuery = ''
-  private searchBarEl: HTMLElement | null = null
   private searchInputEl: HTMLInputElement | null = null
   private searchCountEl: HTMLElement | null = null
   private searchBtnEl: HTMLButtonElement | null = null
@@ -524,10 +523,6 @@ export class TableView {
     this.activateCell(clampedRow, clampedCol, 'end')
   }
 
-  public getCurrentTable(): TableData {
-    return this.table
-  }
-
   public canUndo(): boolean {
     return this.history.canUndo()
   }
@@ -856,7 +851,6 @@ export class TableView {
     const prevScrollLeft = this.scrollEl?.scrollLeft ?? 0
     this.activeTextarea = null
     this.activeCell = null
-    this.searchBarEl = null
     this.searchInputEl = null
     this.searchCountEl = null
     this.searchBtnEl = null
@@ -1630,7 +1624,6 @@ export class TableView {
       filterCount > 0,
       filterCount > 0 ? String(filterCount) : undefined
     )
-    filterBtn.className = 'nt-tb-btn forbid-edit' + (filterCount > 0 ? ' nt-active' : '')
     filterBtn.classList.add('nt-tb-filter-btn')
     bar.appendChild(filterBtn)
 
@@ -1820,7 +1813,6 @@ export class TableView {
     })
 
     bar.append(icon, input, countEl, clearBtn)
-    this.searchBarEl = bar
     this.searchInputEl = input
     this.searchCountEl = countEl
     this.syncSearchBarUI()
@@ -4201,7 +4193,6 @@ export class TableView {
   ): void {
     this.flushActiveEdit(true)
     const hasCalc = this.hasAnyCalculation()
-    this.hostEl.classList.add('nt-calc-open')
     const items: PopoverMenuItem[] = [
       { type: 'header', label: 'Calculate Row' },
       {
@@ -4233,7 +4224,6 @@ export class TableView {
     ]
 
     openPopoverMenu(this.doc, anchor, items, () => {
-      this.hostEl.classList.remove('nt-calc-open')
       onClose?.()
     })
   }
@@ -4247,7 +4237,6 @@ export class TableView {
       ? anchorEl.getBoundingClientRect()
       : this.hostEl.getBoundingClientRect()
 
-    this.hostEl.classList.add('nt-calc-open')
     const choices = getCalculationsForColumnType(schema.type)
     const items: PopoverMenuItem[] = [
       { type: 'header', label: `Calculate · ${colTitle}` },
@@ -4277,10 +4266,7 @@ export class TableView {
     openPopoverMenu(
       this.doc,
       { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom },
-      items,
-      () => {
-        this.hostEl.classList.remove('nt-calc-open')
-      }
+      items
     )
   }
 

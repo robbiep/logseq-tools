@@ -286,8 +286,6 @@ async function main(): Promise<void> {
     offGraph?.()
     observer.destroy()
   })
-
-  console.log('[logseq-notion-table] loaded')
 }
 
 logseq.ready(main).catch((err) => {

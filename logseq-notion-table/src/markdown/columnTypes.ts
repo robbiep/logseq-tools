@@ -172,8 +172,6 @@ export const OPTION_COLORS: OptionColor[] = [
   'gray',
 ]
 
-export const DEFAULT_COLUMN_SCHEMA: ColumnSchema = { type: 'text' }
-
 const VALID_COLUMN_TYPES = new Set<ColumnType>([
   'text',
   'number',

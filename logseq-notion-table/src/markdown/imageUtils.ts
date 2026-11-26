@@ -3,14 +3,6 @@ export interface ImageDimensions {
   height?: number
 }
 
-export interface ParsedImageToken {
-  fullMatch: string
-  alt: string
-  src: string
-  width?: number
-  height?: number
-}
-
 export interface SmartSizeOptions {
   naturalWidth: number
   naturalHeight: number
