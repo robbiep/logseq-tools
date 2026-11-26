@@ -37,6 +37,7 @@ import {
   extractDroppedImageUrl,
   formatImageMarkdown,
   isImageFile,
+  isMediaFile,
   measureImageFile,
   removeImageInRawText,
   updateImageDimensionsInRawText,
@@ -2294,6 +2295,10 @@ export class TableView {
           this.openSelectPickerForCell(cell, rowIdx, colIdx)
           return
         }
+        if (colType === 'media') {
+          this.openMediaFilePicker(cell, rowIdx, colIdx)
+          return
+        }
       }
 
       if (this.activeCell?.row === rowIdx && this.activeCell?.col === colIdx) return
@@ -2870,6 +2875,7 @@ export class TableView {
       display.className = 'nt-cell-display'
       display.appendChild(
         renderCellContent(this.doc, rawVal, {
+          renderImages: false,
           onPageClick: (p, shift) => this.callbacks.onPageClick(p, shift),
           onExternalLinkClick: this.callbacks.onExternalLinkClick,
         })
@@ -3017,11 +3023,6 @@ export class TableView {
         main.appendChild(a)
       } else if (rawVal.trim()) {
         main.appendChild(this.doc.createTextNode(rawVal.trim()))
-      } else {
-        const ph = this.doc.createElement('span')
-        ph.className = 'nt-cell-placeholder'
-        ph.textContent = 'https://…'
-        main.appendChild(ph)
       }
 
       if (this.isLocked()) {
@@ -3060,17 +3061,87 @@ export class TableView {
       return
     }
 
-    // Default: 'text'
     const locked = this.isLocked()
+    const mediaCallbacks = locked
+      ? {}
+      : {
+          onImageResize: (imageIdx: number, dims: { width?: number; height?: number }) => {
+            const nextRaw = updateImageDimensionsInRawText(
+              this.getCellValue(rowIdx, colIdx),
+              imageIdx,
+              dims
+            )
+            this.commitSingleCell(rowIdx, colIdx, nextRaw)
+          },
+          onImageRemove: (imageIdx: number) => {
+            const nextRaw = removeImageInRawText(this.getCellValue(rowIdx, colIdx), imageIdx)
+            this.commitSingleCell(rowIdx, colIdx, nextRaw)
+          },
+        }
+
+    if (schema.type === 'media') {
+      const wrap = this.doc.createElement('div')
+      wrap.className = 'nt-cell-display nt-media-cell forbid-edit'
+      const frag = renderCellContent(this.doc, rawVal, {
+        readOnly: locked,
+        renderImages: true,
+        onPageClick: (pageName, shiftKey) => {
+          this.callbacks.onPageClick(pageName, shiftKey)
+        },
+        onExternalLinkClick: this.callbacks.onExternalLinkClick,
+        resolveAssetUrl: this.callbacks.onResolveAssetUrl,
+        ...mediaCallbacks,
+      })
+      wrap.appendChild(frag)
+
+      if (!locked) {
+        const cellActions = this.doc.createElement('span')
+        cellActions.className = 'nt-media-cell-actions forbid-edit'
+
+        const addBtn = this.doc.createElement('button')
+        addBtn.type = 'button'
+        addBtn.className = 'nt-cell-edit-btn nt-media-add-btn forbid-edit'
+        addBtn.title = 'Add image or video'
+        addBtn.setAttribute('aria-label', 'Add image or video')
+        addBtn.appendChild(createIcon(this.doc, 'plus', 12))
+        this.preventMouseDown(addBtn)
+        addBtn.addEventListener('click', (e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          this.openMediaFilePicker(cell, rowIdx, colIdx)
+        })
+
+        const editBtn = this.doc.createElement('button')
+        editBtn.type = 'button'
+        editBtn.className = 'nt-cell-edit-btn forbid-edit'
+        editBtn.title = 'Edit media Markdown'
+        editBtn.setAttribute('aria-label', 'Edit media Markdown')
+        editBtn.appendChild(createIcon(this.doc, 'edit', 12))
+        this.preventMouseDown(editBtn)
+        editBtn.addEventListener('click', (e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          this.activateCell(rowIdx, colIdx, 'end')
+        })
+
+        cellActions.append(addBtn, editBtn)
+        wrap.appendChild(cellActions)
+      }
+
+      cell.insertBefore(wrap, cell.firstChild)
+      return
+    }
+
+    // Default: 'text'
     const display = this.doc.createElement('div')
     display.className = 'nt-cell-display'
     const frag = renderCellContent(this.doc, rawVal, {
       readOnly: locked,
+      renderImages: false,
       onPageClick: (pageName, shiftKey) => {
         this.callbacks.onPageClick(pageName, shiftKey)
       },
       onExternalLinkClick: this.callbacks.onExternalLinkClick,
-      resolveAssetUrl: this.callbacks.onResolveAssetUrl,
       ...(locked
         ? {}
         : {
@@ -3080,18 +3151,6 @@ export class TableView {
                 cbIdx,
                 checked
               )
-              this.commitSingleCell(rowIdx, colIdx, nextRaw)
-            },
-            onImageResize: (imageIdx: number, dims: { width?: number; height?: number }) => {
-              const nextRaw = updateImageDimensionsInRawText(
-                this.getCellValue(rowIdx, colIdx),
-                imageIdx,
-                dims
-              )
-              this.commitSingleCell(rowIdx, colIdx, nextRaw)
-            },
-            onImageRemove: (imageIdx: number) => {
-              const nextRaw = removeImageInRawText(this.getCellValue(rowIdx, colIdx), imageIdx)
               this.commitSingleCell(rowIdx, colIdx, nextRaw)
             },
           }),
@@ -3110,7 +3169,27 @@ export class TableView {
   }
 
   private canAcceptImageInCell(rowIdx: number, colIdx: number): boolean {
-    return !this.isLocked() && rowIdx >= 1 && this.getColumnSchema(colIdx).type === 'text'
+    return !this.isLocked() && rowIdx >= 1 && this.getColumnSchema(colIdx).type === 'media'
+  }
+
+  private openMediaFilePicker(cell: HTMLElement, rowIdx: number, colIdx: number): void {
+    if (!this.canAcceptImageInCell(rowIdx, colIdx)) return
+    this.flushActiveEdit(true)
+    const input = this.doc.createElement('input')
+    input.type = 'file'
+    input.accept = 'image/*,video/*'
+    input.multiple = true
+    input.className = 'nt-media-file-input forbid-edit'
+    input.style.display = 'none'
+    input.addEventListener('change', () => {
+      const files = Array.from(input.files || []).filter(isMediaFile)
+      input.remove()
+      if (files.length > 0) {
+        void this.saveMediaFilesToCell(rowIdx, colIdx, cell, files)
+      }
+    })
+    this.doc.body.appendChild(input)
+    input.click()
   }
 
   private attachCellImageDrop(cell: HTMLElement, rowIdx: number, colIdx: number): void {
@@ -3163,57 +3242,49 @@ export class TableView {
     })
   }
 
-  private async handleImageDropData(
+  private async saveMediaFilesToCell(
     rowIdx: number,
     colIdx: number,
     cell: HTMLElement,
-    dt: DataTransfer | null | undefined
+    files: File[]
   ): Promise<void> {
-    if (!dt) return
-    const files = Array.from(dt.files || []).filter(isImageFile)
+    if (!this.callbacks.onSaveImageAsset) {
+      this.callbacks.onCopyToast?.('Media storage is unavailable in this environment')
+      return
+    }
     const snippets: string[] = []
     const cellRect = cell.getBoundingClientRect()
     const cellWidth = cellRect.width > 0 ? cellRect.width : undefined
 
-    if (files.length > 0) {
-      if (!this.callbacks.onSaveImageAsset) {
-        this.callbacks.onCopyToast?.('Image storage is unavailable in this environment')
-        return
-      }
-      for (const file of files) {
-        try {
-          const [measured, saved] = await Promise.all([
-            measureImageFile(file),
-            this.callbacks.onSaveImageAsset(file),
-          ])
-          const dims = computeSmartImageSize({
-            naturalWidth: measured?.width ?? 0,
-            naturalHeight: measured?.height ?? 0,
-            maxWidth: this.defaultImageMaxWidth,
-            maxHeight: this.defaultImageMaxHeight,
-            cellWidth,
-          })
-          const alt = (file.name || 'image').replace(/\.[^.]+$/, '') || 'image'
-          snippets.push(formatImageMarkdown(alt, saved.markdownPath, dims))
-        } catch (err) {
-          console.error('[logseq-notion-table] Failed to save dropped image:', err)
-          this.callbacks.onCopyToast?.('Failed to save dropped image')
-        }
-      }
-    } else {
-      const url = extractDroppedImageUrl(dt)
-      if (url) {
+    for (const file of files) {
+      try {
+        const [measured, saved] = await Promise.all([
+          isImageFile(file) ? measureImageFile(file) : Promise.resolve(null),
+          this.callbacks.onSaveImageAsset(file),
+        ])
         const dims = computeSmartImageSize({
-          naturalWidth: 0,
-          naturalHeight: 0,
+          naturalWidth: measured?.width ?? 0,
+          naturalHeight: measured?.height ?? 0,
           maxWidth: this.defaultImageMaxWidth,
           maxHeight: this.defaultImageMaxHeight,
           cellWidth,
         })
-        snippets.push(formatImageMarkdown('image', url, dims))
+        const alt = (file.name || 'media').replace(/\.[^.]+$/, '') || 'media'
+        snippets.push(formatImageMarkdown(alt, saved.markdownPath, dims))
+      } catch (err) {
+        console.error('[logseq-notion-table] Failed to save media file:', err)
+        this.callbacks.onCopyToast?.('Failed to save media file')
       }
     }
 
+    this.insertMediaSnippetsIntoCell(rowIdx, colIdx, snippets)
+  }
+
+  private insertMediaSnippetsIntoCell(
+    rowIdx: number,
+    colIdx: number,
+    snippets: string[]
+  ): void {
     if (snippets.length === 0) return
 
     const joined = snippets.join('\n')
@@ -3241,6 +3312,33 @@ export class TableView {
     const existing = this.getCellValue(rowIdx, colIdx).trim()
     const nextVal = existing ? `${existing}\n${joined}` : joined
     this.commitSingleCell(rowIdx, colIdx, nextVal)
+  }
+
+  private async handleImageDropData(
+    rowIdx: number,
+    colIdx: number,
+    cell: HTMLElement,
+    dt: DataTransfer | null | undefined
+  ): Promise<void> {
+    if (!dt) return
+    const files = Array.from(dt.files || []).filter(isMediaFile)
+    if (files.length > 0) {
+      await this.saveMediaFilesToCell(rowIdx, colIdx, cell, files)
+      return
+    }
+
+    const url = extractDroppedImageUrl(dt)
+    if (!url) return
+    const cellRect = cell.getBoundingClientRect()
+    const cellWidth = cellRect.width > 0 ? cellRect.width : undefined
+    const dims = computeSmartImageSize({
+      naturalWidth: 0,
+      naturalHeight: 0,
+      maxWidth: this.defaultImageMaxWidth,
+      maxHeight: this.defaultImageMaxHeight,
+      cellWidth,
+    })
+    this.insertMediaSnippetsIntoCell(rowIdx, colIdx, [formatImageMarkdown('media', url, dims)])
   }
 
   private buildColHandle(colIdx: number): HTMLElement {
@@ -4363,7 +4461,7 @@ export class TableView {
     })
 
     textarea.addEventListener('paste', (e) => {
-      const files = Array.from(e.clipboardData?.files || []).filter(isImageFile)
+      const files = Array.from(e.clipboardData?.files || []).filter(isMediaFile)
       if (files.length > 0) {
         e.preventDefault()
         e.stopPropagation()

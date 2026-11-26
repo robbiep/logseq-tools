@@ -40,6 +40,7 @@ export type IconName =
   | 'clock'
   | 'clockEdit'
   | 'search'
+  | 'image'
 
 interface PathSpec {
   tag: 'path' | 'circle' | 'rect' | 'line'
@@ -196,6 +197,11 @@ const ICON_SPECS: Record<IconName, PathSpec[]> = {
   search: [
     { tag: 'circle', attrs: { cx: '7.2', cy: '7.2', r: '4.7' } },
     { tag: 'path', attrs: { d: 'M10.7 10.7L14 14' } },
+  ],
+  image: [
+    { tag: 'rect', attrs: { x: '2.5', y: '3', width: '11', height: '10', rx: '1.5' } },
+    { tag: 'circle', attrs: { cx: '6', cy: '6.5', r: '1.1', fill: 'currentColor', stroke: 'none' } },
+    { tag: 'path', attrs: { d: 'M3 11.5l3-3 2.2 2.2 1.8-1.8 3 2.6' } },
   ],
 }
 

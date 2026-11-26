@@ -12,6 +12,7 @@ export const COLUMN_TYPE_ICONS: Record<ColumnType, IconName> = {
   'multi-select': 'multiSelect',
   checkbox: 'checkbox',
   url: 'link',
+  media: 'image',
 }
 
 export const COLUMN_TYPE_CHOICES: ColumnType[] = [
@@ -22,6 +23,7 @@ export const COLUMN_TYPE_CHOICES: ColumnType[] = [
   'multi-select',
   'checkbox',
   'url',
+  'media',
   'created-time',
   'edited-time',
 ]

@@ -267,8 +267,10 @@ describe('TableView column types end-to-end', () => {
     await new Promise((r) => setTimeout(r, 20))
     expect(blocks['uuid-types']).toContain('[x]')
 
-    // 4. URL cell: enter plaintext domain -> renders clickable hyperlink
+    // 4. URL cell: empty renders without placeholder, plaintext domain renders clickable hyperlink
     const urlCell = host.querySelector('tbody tr td[data-col="4"]') as HTMLElement
+    expect(urlCell.querySelector('.nt-url-main')?.textContent).toBe('')
+    expect(urlCell.querySelector('.nt-cell-placeholder')).toBeNull()
     urlCell.click()
     const urlEditor = urlCell.querySelector('textarea.nt-cell-editor') as HTMLTextAreaElement
     urlEditor.value = 'github.com/logseq/og'

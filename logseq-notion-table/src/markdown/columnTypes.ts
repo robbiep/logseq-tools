@@ -11,6 +11,7 @@ export type ColumnType =
   | 'multi-select'
   | 'checkbox'
   | 'url'
+  | 'media'
 
 export function isTimestampColumnType(type: ColumnType): boolean {
   return type === 'created-time' || type === 'edited-time'
@@ -77,6 +78,7 @@ export const COLUMN_TYPE_LABELS: Record<ColumnType, string> = {
   'multi-select': 'Multi-select',
   checkbox: 'Checkbox',
   url: 'URL',
+  media: 'Media',
 }
 
 export const CALCULATION_LABELS: Record<ColumnCalculation, string> = {
@@ -182,6 +184,7 @@ const VALID_COLUMN_TYPES = new Set<ColumnType>([
   'multi-select',
   'checkbox',
   'url',
+  'media',
 ])
 
 const VALID_OPTION_COLORS = new Set<OptionColor>(OPTION_COLORS)

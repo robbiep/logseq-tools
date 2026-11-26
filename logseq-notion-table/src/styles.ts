@@ -1178,6 +1178,37 @@ td.nt-cell-drop-target {
   background: var(--nt-header-bg);
 }
 
+.nt-cell-video {
+  background: #000000;
+}
+
+.nt-media-cell {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-height: 20px;
+  cursor: pointer;
+}
+
+.nt-media-cell-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+td:hover .nt-media-cell-actions,
+.nt-media-cell-actions:focus-within {
+  opacity: 1;
+}
+
+.nt-media-cell .nt-cell-edit-btn {
+  opacity: 1;
+}
+
 .nt-img-actions {
   position: absolute;
   top: 4px;
@@ -1502,12 +1533,6 @@ td:has(> .nt-timestamp-cell) {
   flex: 0 0 auto;
   color: var(--nt-muted);
   opacity: 0.72;
-}
-
-.nt-cell-placeholder {
-  color: var(--nt-muted);
-  opacity: 0.48;
-  font-size: 0.9em;
 }
 
 .nt-url-link {

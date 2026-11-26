@@ -9,12 +9,15 @@ import {
   IMAGE_TOKEN_RE,
   isDirectAssetUrl,
   isSafeImageSrc,
+  isVideoSrc,
+  normalizeVideoPlaybackUrl,
   parseImageMeta,
   type ImageDimensions,
 } from './imageUtils'
 
 export interface InlineRenderCallbacks {
   readOnly?: boolean
+  renderImages?: boolean
   onPageClick?: (pageName: string, shiftKey: boolean) => void
   onExternalLinkClick?: (url: string) => void
   onCheckboxToggle?: (checkboxIndex: number, checked: boolean) => void
@@ -66,18 +69,20 @@ function appendTextOrFormatted(
       })
     }
 
-    // 2. Image token: ![alt](src){:width ..., :height ...}
-    const imgMatch = rest.match(IMAGE_TOKEN_RE)
-    if (imgMatch && imgMatch.index !== undefined && isSafeImageSrc(imgMatch[2])) {
-      const alt = imgMatch[1].replace(/\\\]/g, ']')
-      const rawSrc = imgMatch[2]
-      const dims = parseImageMeta(imgMatch[3])
-      const imageIdx = counters.images++
-      candidates.push({
-        index: imgMatch.index,
-        length: imgMatch[0].length,
-        build: (d) => buildImageElement(d, alt, rawSrc, dims, imageIdx, callbacks),
-      })
+    // 2. Media token: ![alt](src){:width ..., :height ...}
+    if (callbacks.renderImages !== false) {
+      const imgMatch = rest.match(IMAGE_TOKEN_RE)
+      if (imgMatch && imgMatch.index !== undefined && isSafeImageSrc(imgMatch[2])) {
+        const alt = imgMatch[1].replace(/\\\]/g, ']')
+        const rawSrc = imgMatch[2]
+        const dims = parseImageMeta(imgMatch[3])
+        const imageIdx = counters.images++
+        candidates.push({
+          index: imgMatch.index,
+          length: imgMatch[0].length,
+          build: (d) => buildImageElement(d, alt, rawSrc, dims, imageIdx, callbacks),
+        })
+      }
     }
 
     // 3. Checkbox: [ ] or [x] / [X] at start of line or preceded by whitespace
@@ -259,13 +264,32 @@ function buildImageElement(
   wrap.className = 'nt-img-wrap forbid-edit'
   wrap.dataset.imageIndex = String(imageIdx)
 
-  const img = doc.createElement('img')
-  img.className = 'nt-cell-img forbid-edit'
-  img.alt = alt
-  img.loading = 'lazy'
-  img.draggable = false
-  if (dims.width) img.style.width = `${dims.width}px`
-  if (dims.height) img.style.height = `${dims.height}px`
+  const isVideo = isVideoSrc(rawSrc)
+  let mediaEl: HTMLImageElement | HTMLVideoElement
+  if (isVideo) {
+    const video = doc.createElement('video')
+    video.className = 'nt-cell-img nt-cell-video forbid-edit'
+    video.controls = true
+    video.playsInline = true
+    video.preload = 'metadata'
+    if (dims.width) video.style.width = `${dims.width}px`
+    if (dims.height) video.style.height = `${dims.height}px`
+    mediaEl = video
+  } else {
+    const img = doc.createElement('img')
+    img.className = 'nt-cell-img forbid-edit'
+    img.alt = alt
+    img.loading = 'lazy'
+    img.draggable = false
+    if (dims.width) img.style.width = `${dims.width}px`
+    if (dims.height) img.style.height = `${dims.height}px`
+    mediaEl = img
+  }
+
+  const applySrc = (nextSrc: string) => {
+    const finalSrc = nextSrc || rawSrc
+    mediaEl.src = isVideo ? normalizeVideoPlaybackUrl(finalSrc) : finalSrc
+  }
 
   const needsResolution = callbacks.resolveAssetUrl && !isDirectAssetUrl(rawSrc)
 
@@ -273,24 +297,27 @@ function buildImageElement(
     void callbacks
       .resolveAssetUrl(rawSrc)
       .then((resolved) => {
-        img.src = resolved || rawSrc
+        applySrc(resolved || rawSrc)
       })
       .catch(() => {
-        img.src = rawSrc
+        applySrc(rawSrc)
       })
   } else {
-    img.src = rawSrc
+    applySrc(rawSrc)
   }
 
-  // Hover toolbar over image
+  // Hover toolbar over media
   const actions = doc.createElement('span')
   actions.className = 'nt-img-actions forbid-edit'
 
   const resizeBtn = doc.createElement('button')
   resizeBtn.type = 'button'
   resizeBtn.className = 'nt-img-act-btn forbid-edit'
-  resizeBtn.title = 'Customize image dimensions'
-  resizeBtn.setAttribute('aria-label', 'Customize image dimensions')
+  resizeBtn.title = isVideo ? 'Customize video dimensions' : 'Customize image dimensions'
+  resizeBtn.setAttribute(
+    'aria-label',
+    isVideo ? 'Customize video dimensions' : 'Customize image dimensions'
+  )
   resizeBtn.appendChild(createIcon(doc, 'sliders', 12))
   resizeBtn.addEventListener('mousedown', (e) => {
     e.preventDefault()
@@ -299,17 +326,19 @@ function buildImageElement(
   resizeBtn.addEventListener('click', (e) => {
     e.preventDefault()
     e.stopPropagation()
-    const rect = img.getBoundingClientRect()
-    const curW = Math.round(dims.width || rect.width || img.naturalWidth || 200)
-    const curH = Math.round(dims.height || rect.height || img.naturalHeight || 150)
+    const rect = mediaEl.getBoundingClientRect()
+    const natW = mediaEl instanceof HTMLVideoElement ? mediaEl.videoWidth : mediaEl.naturalWidth
+    const natH = mediaEl instanceof HTMLVideoElement ? mediaEl.videoHeight : mediaEl.naturalHeight
+    const curW = Math.round(dims.width || rect.width || natW || 200)
+    const curH = Math.round(dims.height || rect.height || natH || 150)
     openImageDimensionPopover(
       doc,
       toAnchorRect(resizeBtn),
       {
         currentWidth: curW,
         currentHeight: curH,
-        naturalWidth: img.naturalWidth || undefined,
-        naturalHeight: img.naturalHeight || undefined,
+        naturalWidth: natW || undefined,
+        naturalHeight: natH || undefined,
         onApply: (nextDims) => {
           callbacks.onImageResize?.(imageIdx, nextDims)
         },
@@ -333,14 +362,14 @@ function buildImageElement(
   previewBtn.addEventListener('click', (e) => {
     e.preventDefault()
     e.stopPropagation()
-    openImageLightbox(doc, img.currentSrc || img.src || rawSrc, alt)
+    openImageLightbox(doc, mediaEl.currentSrc || mediaEl.src || rawSrc, alt, isVideo)
   })
 
   const removeBtn = doc.createElement('button')
   removeBtn.type = 'button'
   removeBtn.className = 'nt-img-act-btn nt-img-act-danger forbid-edit'
-  removeBtn.title = 'Remove image'
-  removeBtn.setAttribute('aria-label', 'Remove image')
+  removeBtn.title = isVideo ? 'Remove video' : 'Remove image'
+  removeBtn.setAttribute('aria-label', isVideo ? 'Remove video' : 'Remove image')
   removeBtn.appendChild(createIcon(doc, 'trash', 12))
   removeBtn.addEventListener('mousedown', (e) => {
     e.preventDefault()
@@ -357,12 +386,12 @@ function buildImageElement(
     wrap.addEventListener('click', (e) => {
       e.stopPropagation()
     })
-    img.addEventListener('dblclick', (e) => {
+    mediaEl.addEventListener('dblclick', (e) => {
       e.preventDefault()
       e.stopPropagation()
-      openImageLightbox(doc, img.currentSrc || img.src || rawSrc, alt)
+      openImageLightbox(doc, mediaEl.currentSrc || mediaEl.src || rawSrc, alt, isVideo)
     })
-    wrap.append(img, actions)
+    wrap.append(mediaEl, actions)
     return wrap
   }
 
@@ -374,7 +403,7 @@ function buildImageElement(
   resizer.title = 'Drag to resize (hold Shift for freeform)'
   attachImageCornerResize({
     doc,
-    imgEl: img,
+    imgEl: mediaEl,
     wrapEl: wrap,
     handleEl: resizer,
     initialWidth: dims.width,
@@ -384,18 +413,21 @@ function buildImageElement(
     },
   })
 
-  // Prevent clicking directly on image controls from entering raw text edit;
-  // double-clicking the image opens full preview
+  // Prevent clicking directly on media controls from entering raw text edit;
+  // double-clicking opens full preview
   wrap.addEventListener('click', (e) => {
     e.stopPropagation()
   })
-  img.addEventListener('dblclick', (e) => {
+  mediaEl.addEventListener('dblclick', (e) => {
     e.preventDefault()
     e.stopPropagation()
-    openImageLightbox(doc, img.currentSrc || img.src || rawSrc, alt)
+    if (isVideo) {
+      ;(mediaEl as HTMLVideoElement).pause?.()
+    }
+    openImageLightbox(doc, mediaEl.currentSrc || mediaEl.src || rawSrc, alt, isVideo)
   })
 
-  wrap.append(img, actions, resizer)
+  wrap.append(mediaEl, actions, resizer)
   return wrap
 }
 

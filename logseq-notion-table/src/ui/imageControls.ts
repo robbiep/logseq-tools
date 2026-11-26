@@ -1,4 +1,4 @@
-import type { ImageDimensions } from '../markdown/imageUtils'
+import { normalizeVideoPlaybackUrl, type ImageDimensions } from '../markdown/imageUtils'
 import { createIcon } from './icons'
 import { positionAnchoredElement, stopEvents, type AnchorRect } from './popoverPosition'
 
@@ -232,15 +232,33 @@ export function openImageDimensionPopover(
   return close
 }
 
-export function openImageLightbox(doc: Document, src: string, alt: string): () => void {
+export function openImageLightbox(
+  doc: Document,
+  src: string,
+  alt: string,
+  isVideo = false
+): () => void {
   const overlay = doc.createElement('div')
   overlay.className = 'nt-img-lightbox forbid-edit'
 
-  const img = doc.createElement('img')
-  img.src = src
-  img.alt = alt
-  img.className = 'nt-img-lightbox-img forbid-edit'
-  img.addEventListener('click', (e) => e.stopPropagation())
+  let mediaEl: HTMLElement
+  if (isVideo) {
+    const video = doc.createElement('video')
+    video.src = normalizeVideoPlaybackUrl(src)
+    video.controls = true
+    video.playsInline = true
+    video.autoplay = true
+    video.className = 'nt-img-lightbox-img nt-img-lightbox-video forbid-edit'
+    video.addEventListener('click', (e) => e.stopPropagation())
+    mediaEl = video
+  } else {
+    const img = doc.createElement('img')
+    img.src = src
+    img.alt = alt
+    img.className = 'nt-img-lightbox-img forbid-edit'
+    img.addEventListener('click', (e) => e.stopPropagation())
+    mediaEl = img
+  }
 
   const closeBtn = doc.createElement('button')
   closeBtn.type = 'button'
@@ -271,14 +289,14 @@ export function openImageLightbox(doc: Document, src: string, alt: string): () =
   })
 
   doc.addEventListener('keydown', onKey, true)
-  overlay.append(img, closeBtn)
+  overlay.append(mediaEl, closeBtn)
   doc.body.appendChild(overlay)
   return close
 }
 
 export interface CornerResizeOptions {
   doc: Document
-  imgEl: HTMLImageElement
+  imgEl: HTMLImageElement | HTMLVideoElement
   wrapEl: HTMLElement
   handleEl: HTMLElement
   initialWidth?: number
@@ -296,11 +314,15 @@ export function attachImageCornerResize(opts: CornerResizeOptions): void {
     downEv.stopPropagation()
 
     const rect = imgEl.getBoundingClientRect()
-    const startW = Math.max(24, Math.round(rect.width || initialWidth || imgEl.naturalWidth || 180))
-    const startH = Math.max(24, Math.round(rect.height || initialHeight || imgEl.naturalHeight || 120))
+    const intrinsicW =
+      imgEl instanceof HTMLVideoElement ? imgEl.videoWidth : imgEl.naturalWidth
+    const intrinsicH =
+      imgEl instanceof HTMLVideoElement ? imgEl.videoHeight : imgEl.naturalHeight
+    const startW = Math.max(24, Math.round(rect.width || initialWidth || intrinsicW || 180))
+    const startH = Math.max(24, Math.round(rect.height || initialHeight || intrinsicH || 120))
     const ratio =
-      imgEl.naturalWidth > 0 && imgEl.naturalHeight > 0
-        ? imgEl.naturalWidth / imgEl.naturalHeight
+      intrinsicW > 0 && intrinsicH > 0
+        ? intrinsicW / intrinsicH
         : startW / startH
 
     const startX = downEv.clientX
