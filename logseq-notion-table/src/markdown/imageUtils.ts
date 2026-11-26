@@ -268,6 +268,16 @@ function isSafeHttpUrl(url: string): boolean {
   }
 }
 
+export function isDirectAssetUrl(src: string): boolean {
+  return (
+    src.startsWith('http://') ||
+    src.startsWith('https://') ||
+    src.startsWith('data:') ||
+    src.startsWith('blob:') ||
+    src.startsWith('assets://')
+  )
+}
+
 /**
  * Check whether an image src is safe to render inside a cell.
  * Allows http:, https:, assets:, blob:, data:image/*, and relative graph paths.

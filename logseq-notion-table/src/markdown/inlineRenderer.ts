@@ -4,8 +4,10 @@ import {
   openImageDimensionPopover,
   openImageLightbox,
 } from '../ui/imageControls'
+import { toAnchorRect } from '../ui/popoverPosition'
 import {
   IMAGE_TOKEN_RE,
+  isDirectAssetUrl,
   isSafeImageSrc,
   parseImageMeta,
   type ImageDimensions,
@@ -265,13 +267,7 @@ function buildImageElement(
   if (dims.width) img.style.width = `${dims.width}px`
   if (dims.height) img.style.height = `${dims.height}px`
 
-  const needsResolution =
-    callbacks.resolveAssetUrl &&
-    !rawSrc.startsWith('http://') &&
-    !rawSrc.startsWith('https://') &&
-    !rawSrc.startsWith('data:') &&
-    !rawSrc.startsWith('blob:') &&
-    !rawSrc.startsWith('assets://')
+  const needsResolution = callbacks.resolveAssetUrl && !isDirectAssetUrl(rawSrc)
 
   if (needsResolution && callbacks.resolveAssetUrl) {
     void callbacks
@@ -304,17 +300,11 @@ function buildImageElement(
     e.preventDefault()
     e.stopPropagation()
     const rect = img.getBoundingClientRect()
-    const btnRect = resizeBtn.getBoundingClientRect()
     const curW = Math.round(dims.width || rect.width || img.naturalWidth || 200)
     const curH = Math.round(dims.height || rect.height || img.naturalHeight || 150)
     openImageDimensionPopover(
       doc,
-      {
-        left: btnRect.left,
-        top: btnRect.top,
-        right: btnRect.right,
-        bottom: btnRect.bottom,
-      },
+      toAnchorRect(resizeBtn),
       {
         currentWidth: curW,
         currentHeight: curH,

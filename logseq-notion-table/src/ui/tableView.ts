@@ -95,8 +95,9 @@ import { createIcon, type IconName } from './icons'
 import { closeActiveImagePopover } from './imageControls'
 import { PageAutocompleteController } from './pageAutocomplete'
 import { closeActivePopover, openPopoverMenu, type PopoverMenuItem } from './popoverMenu'
+import { toAnchorRect, type AnchorRect } from './popoverPosition'
 import { closeActiveSelectPicker, openSelectPicker } from './selectPicker'
-import { cloneTableData, TableHistory, tablesEqual } from './tableHistory'
+import { cloneTableData, getUndoRedoAction, TableHistory, tablesEqual } from './tableHistory'
 
 export interface TableViewCallbacks {
   onCommit: (nextTable: TableData) => Promise<void> | void
@@ -1162,7 +1163,7 @@ export class TableView {
 
     const schema = this.getColumnSchema(colIdx)
     const colName = (this.table.headers[colIdx] || '').trim() || `Column ${colIdx + 1}`
-    const rect = anchorEl.getBoundingClientRect()
+    const anchor = toAnchorRect(anchorEl)
     const values = selectedRows.map((b) => this.table.rows[b]?.[colIdx] ?? '')
     const commonRaw = values.every((v) => v === values[0]) ? values[0] : ''
 
@@ -1175,7 +1176,7 @@ export class TableView {
       )
       openSelectPicker(
         this.doc,
-        { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom },
+        anchor,
         {
           multi: false,
           currentRaw: commonRaw,
@@ -1217,7 +1218,7 @@ export class TableView {
     if (schema.type === 'date') {
       openDatePicker(
         this.doc,
-        { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom },
+        anchor,
         {
           currentRaw: commonRaw,
           dateFormat: this.preferredDateFormat,
@@ -1252,7 +1253,7 @@ export class TableView {
       const allUnchecked = values.every((v) => !isCheckboxChecked(v))
       openPopoverMenu(
         this.doc,
-        { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom },
+        anchor,
         [
           { type: 'header', label: colName },
           {
@@ -2077,7 +2078,6 @@ export class TableView {
 
   private openAddFilterMenu(anchorEl: HTMLElement): void {
     this.flushActiveEdit(true)
-    const rect = anchorEl.getBoundingClientRect()
     const activeCols = new Set((this.table.filters || []).map((f) => f.col))
     const items: PopoverMenuItem[] = [
       { type: 'header', label: 'Filter by Column' },
@@ -2113,7 +2113,7 @@ export class TableView {
 
     openPopoverMenu(
       this.doc,
-      { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom },
+      toAnchorRect(anchorEl),
       items
     )
   }
@@ -2138,9 +2138,7 @@ export class TableView {
     isDraft: boolean
   ): void {
     this.flushActiveEdit(true)
-    const anchorRect = anchorEl.isConnected
-      ? anchorEl.getBoundingClientRect()
-      : this.hostEl.getBoundingClientRect()
+    const anchorTarget = anchorEl.isConnected ? anchorEl : this.hostEl
     const colIdx = filter.col
     const schema = this.getColumnSchema(colIdx)
     const colName = (this.table.headers[colIdx] || '').trim() || `Column ${colIdx + 1}`
@@ -2161,12 +2159,7 @@ export class TableView {
 
     openFilterPopover(
       this.doc,
-      {
-        left: anchorRect.left,
-        top: anchorRect.top,
-        right: anchorRect.right,
-        bottom: anchorRect.bottom,
-      },
+      toAnchorRect(anchorTarget),
       {
         filter: latestFilter,
         columnName: colName,
@@ -2782,11 +2775,10 @@ export class TableView {
 
   private openDatePickerForCell(cell: HTMLElement, rowIdx: number, colIdx: number): void {
     this.flushActiveEdit(true)
-    const rect = cell.getBoundingClientRect()
     const currentRaw = this.getCellValue(rowIdx, colIdx)
     openDatePicker(
       this.doc,
-      { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom },
+      toAnchorRect(cell),
       {
         currentRaw,
         dateFormat: this.preferredDateFormat,
@@ -2808,7 +2800,6 @@ export class TableView {
     manageOnly = false
   ): void {
     this.flushActiveEdit(true)
-    const rect = cell.getBoundingClientRect()
     const schema = this.getColumnSchema(colIdx)
     const multi = schema.type === 'multi-select'
     const harvestedOptions = harvestOptionsFromColumn(
@@ -2819,7 +2810,7 @@ export class TableView {
     )
     openSelectPicker(
       this.doc,
-      { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom },
+      toAnchorRect(cell),
       {
         multi,
         manageOnly,
@@ -3334,10 +3325,9 @@ export class TableView {
           : [],
       onClick: () => {
         btn.classList.add('nt-handle-open')
-        const rect = btn.getBoundingClientRect()
         openPopoverMenu(
           this.doc,
-          { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom },
+          toAnchorRect(btn),
           this.buildColMenuItems(colIdx),
           () => btn.classList.remove('nt-handle-open')
         )
@@ -3420,10 +3410,9 @@ export class TableView {
         e.preventDefault()
         e.stopPropagation()
         btn.classList.add('nt-handle-open')
-        const rect = btn.getBoundingClientRect()
         openPopoverMenu(
           this.doc,
-          { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom },
+          toAnchorRect(btn),
           this.buildRowMenuItems(0),
           () => btn.classList.remove('nt-handle-open')
         )
@@ -3459,10 +3448,9 @@ export class TableView {
       createDragGhost: (sourceEls) => this.buildRowDragGhost(sourceEls),
       onClick: () => {
         btn.classList.add('nt-handle-open')
-        const rect = btn.getBoundingClientRect()
         openPopoverMenu(
           this.doc,
-          { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom },
+          toAnchorRect(btn),
           this.buildRowMenuItems(rowIdx),
           () => btn.classList.remove('nt-handle-open')
         )
@@ -4178,9 +4166,8 @@ export class TableView {
       e.preventDefault()
       e.stopPropagation()
       btn.classList.add('nt-handle-open')
-      const rect = btn.getBoundingClientRect()
       this.openCalcRowMenu(
-        { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom },
+        toAnchorRect(btn),
         () => btn.classList.remove('nt-handle-open')
       )
     })
@@ -4188,7 +4175,7 @@ export class TableView {
   }
 
   private openCalcRowMenu(
-    anchor: { left: number; top: number; right?: number; bottom?: number },
+    anchor: AnchorRect,
     onClose?: () => void
   ): void {
     this.flushActiveEdit(true)
@@ -4233,9 +4220,7 @@ export class TableView {
     const schema = this.getColumnSchema(colIdx)
     const curCalc: ColumnCalculation = schema.calc || 'none'
     const colTitle = (this.table.headers[colIdx] || '').trim() || `Column ${colIdx + 1}`
-    const rect = anchorEl.isConnected
-      ? anchorEl.getBoundingClientRect()
-      : this.hostEl.getBoundingClientRect()
+    const anchorTarget = anchorEl.isConnected ? anchorEl : this.hostEl
 
     const choices = getCalculationsForColumnType(schema.type)
     const items: PopoverMenuItem[] = [
@@ -4263,11 +4248,7 @@ export class TableView {
       )
     }
 
-    openPopoverMenu(
-      this.doc,
-      { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom },
-      items
-    )
+    openPopoverMenu(this.doc, toAnchorRect(anchorTarget), items)
   }
 
   private buildColFilterMenuItems(colIdx: number): PopoverMenuItem[] {
@@ -4509,22 +4490,11 @@ export class TableView {
     rowIdx: number,
     colIdx: number
   ): void {
-    if (!e.altKey) {
-      const k = e.key.toLowerCase()
-      const isUndo = (e.metaKey || e.ctrlKey) && !e.shiftKey && k === 'z'
-      const isRedo =
-        ((e.metaKey || e.ctrlKey) && e.shiftKey && k === 'z') ||
-        (e.ctrlKey && !e.metaKey && !e.shiftKey && k === 'y')
-      if (isUndo && this.undo()) {
-        e.preventDefault()
-        e.stopPropagation()
-        return
-      }
-      if (isRedo && this.redo()) {
-        e.preventDefault()
-        e.stopPropagation()
-        return
-      }
+    const historyAction = getUndoRedoAction(e)
+    if (historyAction && (historyAction === 'undo' ? this.undo() : this.redo())) {
+      e.preventDefault()
+      e.stopPropagation()
+      return
     }
 
     if (this.autocomplete?.handleKeyDown(e)) {

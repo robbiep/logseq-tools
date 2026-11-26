@@ -697,24 +697,18 @@ export function computeColumnCalculation(
     return { label, value: String(total) }
   }
 
-  if (calc === 'count_empty') {
+  if (
+    calc === 'count_empty' ||
+    calc === 'count_not_empty' ||
+    calc === 'percent_empty' ||
+    calc === 'percent_not_empty'
+  ) {
     const emptyCount = cells.filter((c) => isCellEmptyForCalc(c, colType)).length
-    return { label, value: String(emptyCount) }
-  }
-
-  if (calc === 'count_not_empty') {
-    const nonEmpty = cells.filter((c) => !isCellEmptyForCalc(c, colType)).length
-    return { label, value: String(nonEmpty) }
-  }
-
-  if (calc === 'percent_empty') {
-    const emptyCount = cells.filter((c) => isCellEmptyForCalc(c, colType)).length
-    return { label, value: formatPercent(emptyCount, total) }
-  }
-
-  if (calc === 'percent_not_empty') {
-    const nonEmpty = cells.filter((c) => !isCellEmptyForCalc(c, colType)).length
-    return { label, value: formatPercent(nonEmpty, total) }
+    const nonEmptyCount = total - emptyCount
+    if (calc === 'count_empty') return { label, value: String(emptyCount) }
+    if (calc === 'count_not_empty') return { label, value: String(nonEmptyCount) }
+    if (calc === 'percent_empty') return { label, value: formatPercent(emptyCount, total) }
+    return { label, value: formatPercent(nonEmptyCount, total) }
   }
 
   if (calc === 'count_unique') {

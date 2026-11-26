@@ -488,16 +488,11 @@ export function buildPrefilledRowForFilters(
       continue
     }
 
-    if (colType === 'select' && filter.op === 'is' && Array.isArray(filter.value)) {
-      const first = filter.value.find((v) => v.trim().length > 0)
-      if (first) {
-        const opt = schema?.options?.find((o) => o.label.toLowerCase() === first.toLowerCase())
-        row[col] = formatSelectCellValues([{ label: opt?.label ?? first, isPage: opt?.isPage }])
-      }
-      continue
-    }
-
-    if (colType === 'multi-select' && filter.op === 'contains' && Array.isArray(filter.value)) {
+    if (
+      ((colType === 'select' && filter.op === 'is') ||
+        (colType === 'multi-select' && filter.op === 'contains')) &&
+      Array.isArray(filter.value)
+    ) {
       const first = filter.value.find((v) => v.trim().length > 0)
       if (first) {
         const opt = schema?.options?.find((o) => o.label.toLowerCase() === first.toLowerCase())

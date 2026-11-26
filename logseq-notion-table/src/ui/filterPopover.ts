@@ -6,9 +6,6 @@ import {
 import {
   formatLogseqDate,
   formatRelativeDateLabel,
-  getMonthCalendarGrid,
-  getMonthTitle,
-  getWeekdayShortHeaders,
   normalizeRelativeDateToken,
   parsePlaintextDate,
 } from '../markdown/dateUtils'
@@ -20,7 +17,9 @@ import {
   type TableFilter,
 } from '../markdown/tableFilters'
 import { COLUMN_TYPE_ICONS } from './addColumnDialog'
+import { createCalendarSection } from './datePicker'
 import { createIcon } from './icons'
+import { positionAnchoredElement, stopEvents, type AnchorRect } from './popoverPosition'
 
 export interface FilterPopoverOptions {
   filter: TableFilter
@@ -44,23 +43,13 @@ export function closeActiveFilterPopover(): void {
   }
 }
 
-function isSameDay(a: Date | null, b: Date | null): boolean {
-  if (!a || !b) return false
-  return (
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate()
-  )
-}
-
 export function openFilterPopover(
   doc: Document,
-  anchor: { left: number; top: number; right?: number; bottom?: number },
+  anchor: AnchorRect,
   opts: FilterPopoverOptions
 ): () => void {
   closeActiveFilterPopover()
 
-  const win = doc.defaultView || window
   const colType = opts.columnSchema.type
   let current = cloneFilter(opts.filter)
 
@@ -69,12 +58,7 @@ export function openFilterPopover(
   pop.setAttribute('role', 'dialog')
   pop.setAttribute('aria-label', `Filter ${opts.columnName || 'Column'}`)
 
-  const stop = (e: Event) => {
-    e.stopPropagation()
-  }
-  for (const evt of ['mousedown', 'mouseup', 'click', 'keydown', 'keyup', 'input', 'change']) {
-    pop.addEventListener(evt, stop)
-  }
+  stopEvents(pop, ['mousedown', 'mouseup', 'click', 'keydown', 'keyup', 'input', 'change'])
 
   // Header
   const header = doc.createElement('div')
@@ -128,20 +112,7 @@ export function openFilterPopover(
   }
 
   const positionPopover = () => {
-    const rect = pop.getBoundingClientRect()
-    const vw = win.innerWidth || doc.documentElement.clientWidth || 1024
-    const vh = win.innerHeight || doc.documentElement.clientHeight || 768
-
-    let left = anchor.left
-    let top = anchor.bottom !== undefined ? anchor.bottom + 4 : anchor.top + 4
-    if (left + rect.width > vw - 10) {
-      left = Math.max(8, vw - rect.width - 10)
-    }
-    if (top + rect.height > vh - 10 && anchor.top - rect.height - 4 >= 8) {
-      top = anchor.top - rect.height - 4
-    }
-    pop.style.left = `${Math.max(8, left)}px`
-    pop.style.top = `${Math.max(8, top)}px`
+    positionAnchoredElement(doc, pop, anchor)
   }
 
   const renderBody = (): HTMLElement | null => {
@@ -323,8 +294,7 @@ export function openFilterPopover(
     const rawVal = typeof current.value === 'string' ? current.value : ''
     const initialRelToken = normalizeRelativeDateToken(rawVal)
     let selectedDate = parsePlaintextDate(rawVal, today)
-    let viewYear = (selectedDate || today).getFullYear()
-    let viewMonth = (selectedDate || today).getMonth()
+    const initialView = selectedDate || today
 
     const inputWrap = doc.createElement('div')
     inputWrap.className = 'nt-dp-input-wrap'
@@ -364,41 +334,6 @@ export function openFilterPopover(
     inputWrap.append(input, preview)
     body.appendChild(inputWrap)
 
-    const calHeader = doc.createElement('div')
-    calHeader.className = 'nt-dp-cal-header'
-
-    const prevBtn = doc.createElement('button')
-    prevBtn.type = 'button'
-    prevBtn.className = 'nt-dp-nav-btn forbid-edit'
-    prevBtn.setAttribute('aria-label', 'Previous month')
-    prevBtn.appendChild(createIcon(doc, 'chevronLeft', 14))
-
-    const monthTitle = doc.createElement('span')
-    monthTitle.className = 'nt-dp-month-title'
-
-    const nextBtn = doc.createElement('button')
-    nextBtn.type = 'button'
-    nextBtn.className = 'nt-dp-nav-btn forbid-edit'
-    nextBtn.setAttribute('aria-label', 'Next month')
-    nextBtn.appendChild(createIcon(doc, 'chevronRight', 14))
-
-    calHeader.append(prevBtn, monthTitle, nextBtn)
-    body.appendChild(calHeader)
-
-    const weekdaysRow = doc.createElement('div')
-    weekdaysRow.className = 'nt-dp-weekdays'
-    for (const wd of getWeekdayShortHeaders(opts.startOfWeek)) {
-      const cell = doc.createElement('span')
-      cell.className = 'nt-dp-weekday'
-      cell.textContent = wd
-      weekdaysRow.appendChild(cell)
-    }
-    body.appendChild(weekdaysRow)
-
-    const gridEl = doc.createElement('div')
-    gridEl.className = 'nt-dp-grid'
-    body.appendChild(gridEl)
-
     const quickButtons: Array<{ token: string; btn: HTMLButtonElement }> = []
     const syncQuickButtons = () => {
       const activeRel = normalizeRelativeDateToken(
@@ -411,15 +346,16 @@ export function openFilterPopover(
       }
     }
 
+    let cal!: ReturnType<typeof createCalendarSection>
+
     const applyDate = (d: Date, immediate: boolean) => {
       selectedDate = d
-      viewYear = d.getFullYear()
-      viewMonth = d.getMonth()
+      cal.setView(d.getFullYear(), d.getMonth())
       const iso = formatLogseqDate(d, 'yyyy-MM-dd')
       current.value = iso
       input.value = formatLogseqDate(d, opts.dateFormat)
       updatePreview(d, input.value)
-      renderCalendar()
+      cal.render()
       syncQuickButtons()
       emitChange(immediate)
     }
@@ -428,65 +364,25 @@ export function openFilterPopover(
       const parsed = parsePlaintextDate(token, today)
       if (parsed) {
         selectedDate = parsed
-        viewYear = parsed.getFullYear()
-        viewMonth = parsed.getMonth()
+        cal.setView(parsed.getFullYear(), parsed.getMonth())
       }
       current.value = token
       input.value = token
       updatePreview(parsed, token)
-      renderCalendar()
+      cal.render()
       syncQuickButtons()
       emitChange(immediate)
     }
 
-    const renderCalendar = () => {
-      monthTitle.textContent = getMonthTitle(viewYear, viewMonth)
-      gridEl.textContent = ''
-      const days = getMonthCalendarGrid(viewYear, viewMonth, opts.startOfWeek)
-      for (const item of days) {
-        const btn = doc.createElement('button')
-        btn.type = 'button'
-        btn.className = 'nt-dp-day forbid-edit'
-        btn.textContent = String(item.date.getDate())
-        btn.dataset.iso = formatLogseqDate(item.date, 'yyyy-MM-dd')
-        if (!item.inCurrentMonth) btn.classList.add('nt-dp-outside')
-        if (isSameDay(item.date, today)) btn.classList.add('nt-dp-today')
-        if (isSameDay(item.date, selectedDate)) btn.classList.add('nt-dp-selected')
-
-        btn.addEventListener('mousedown', (e) => {
-          e.preventDefault()
-          e.stopPropagation()
-        })
-        btn.addEventListener('click', (e) => {
-          e.preventDefault()
-          e.stopPropagation()
-          applyDate(item.date, true)
-        })
-        gridEl.appendChild(btn)
-      }
-    }
-
-    prevBtn.addEventListener('click', (e) => {
-      e.preventDefault()
-      e.stopPropagation()
-      viewMonth--
-      if (viewMonth < 0) {
-        viewMonth = 11
-        viewYear--
-      }
-      renderCalendar()
+    cal = createCalendarSection(doc, {
+      initialYear: initialView.getFullYear(),
+      initialMonth: initialView.getMonth(),
+      startOfWeek: opts.startOfWeek,
+      today,
+      getSelectedDate: () => selectedDate,
+      onSelectDay: (d) => applyDate(d, true),
     })
-
-    nextBtn.addEventListener('click', (e) => {
-      e.preventDefault()
-      e.stopPropagation()
-      viewMonth++
-      if (viewMonth > 11) {
-        viewMonth = 0
-        viewYear++
-      }
-      renderCalendar()
-    })
+    body.append(cal.headerEl, cal.weekdaysEl, cal.gridEl)
 
     input.addEventListener('input', () => {
       const text = input.value
@@ -495,16 +391,15 @@ export function openFilterPopover(
       if (!text.trim()) {
         selectedDate = null
         current.value = ''
-        renderCalendar()
+        cal.render()
         syncQuickButtons()
         emitChange(false)
       } else if (parsed) {
         selectedDate = parsed
-        viewYear = parsed.getFullYear()
-        viewMonth = parsed.getMonth()
+        cal.setView(parsed.getFullYear(), parsed.getMonth())
         const rel = normalizeRelativeDateToken(text)
         current.value = rel ?? formatLogseqDate(parsed, 'yyyy-MM-dd')
-        renderCalendar()
+        cal.render()
         syncQuickButtons()
         emitChange(false)
       }
@@ -579,7 +474,7 @@ export function openFilterPopover(
           current.value = ''
           input.value = ''
           updatePreview(null, '')
-          renderCalendar()
+          cal.render()
           syncQuickButtons()
           emitChange(true)
         },
@@ -589,7 +484,7 @@ export function openFilterPopover(
     body.appendChild(footer)
 
     updatePreview(selectedDate, input.value)
-    renderCalendar()
+    cal.render()
     syncQuickButtons()
     return input
   }
