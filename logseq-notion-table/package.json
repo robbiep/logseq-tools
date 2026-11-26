@@ -1,0 +1,28 @@
+{
+  "name": "logseq-notion-table",
+  "version": "0.1.0",
+  "description": "First-class Notion-like interactive tables for Logseq OG backed by standard GFM Markdown.",
+  "main": "dist/index.html",
+  "type": "module",
+  "logseq": {
+    "id": "logseq-notion-table",
+    "title": "Notion Table"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@logseq/libs": "^0.0.17"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "jsdom": "^25.0.1",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.0",
+    "vitest": "^2.1.8"
+  },
+  "license": "MIT"
+}
