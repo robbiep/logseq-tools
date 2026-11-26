@@ -1,5 +1,6 @@
-import type { ImageDimensions } from '../markdown/imageUtils'
+import { normalizeVideoPlaybackUrl, type ImageDimensions } from '../markdown/imageUtils'
 import { createIcon } from './icons'
+import { positionAnchoredElement, stopEvents, type AnchorRect } from './popoverPosition'
 
 export interface ImageDimensionPopoverOptions {
   currentWidth: number
@@ -21,12 +22,11 @@ export function closeActiveImagePopover(): void {
 
 export function openImageDimensionPopover(
   doc: Document,
-  anchor: { left: number; top: number; right?: number; bottom?: number },
+  anchor: AnchorRect,
   opts: ImageDimensionPopoverOptions
 ): () => void {
   closeActiveImagePopover()
 
-  const win = doc.defaultView || window
   const ratio =
     opts.naturalWidth && opts.naturalHeight && opts.naturalHeight > 0
       ? opts.naturalWidth / opts.naturalHeight
@@ -41,12 +41,7 @@ export function openImageDimensionPopover(
   pop.setAttribute('role', 'dialog')
   pop.setAttribute('aria-label', 'Image dimensions')
 
-  const stop = (e: Event) => {
-    e.stopPropagation()
-  }
-  for (const evt of ['mousedown', 'mouseup', 'click', 'keydown', 'keyup', 'input']) {
-    pop.addEventListener(evt, stop)
-  }
+  stopEvents(pop, ['mousedown', 'mouseup', 'click', 'keydown', 'keyup', 'input'])
 
   const header = doc.createElement('div')
   header.className = 'nt-img-pop-header'
@@ -121,7 +116,6 @@ export function openImageDimensionPopover(
   fields.append(wGroup, lockBtn, hGroup)
   pop.appendChild(fields)
 
-  // Presets row
   const presets = doc.createElement('div')
   presets.className = 'nt-img-pop-presets'
 
@@ -159,7 +153,6 @@ export function openImageDimensionPopover(
   presets.appendChild(origBtn)
   pop.appendChild(presets)
 
-  // Footer apply button
   const footer = doc.createElement('div')
   footer.className = 'nt-img-pop-footer'
 
@@ -200,20 +193,7 @@ export function openImageDimensionPopover(
   pop.style.top = '0px'
   doc.body.appendChild(pop)
 
-  const rect = pop.getBoundingClientRect()
-  const vw = win.innerWidth || doc.documentElement.clientWidth || 1024
-  const vh = win.innerHeight || doc.documentElement.clientHeight || 768
-
-  let left = anchor.left
-  let top = anchor.bottom !== undefined ? anchor.bottom + 4 : anchor.top + 4
-  if (left + rect.width > vw - 10) {
-    left = Math.max(8, vw - rect.width - 10)
-  }
-  if (top + rect.height > vh - 10 && anchor.top - rect.height - 4 >= 8) {
-    top = anchor.top - rect.height - 4
-  }
-  pop.style.left = `${Math.max(8, left)}px`
-  pop.style.top = `${Math.max(8, top)}px`
+  positionAnchoredElement(doc, pop, anchor)
   pop.style.visibility = 'visible'
 
   let closed = false
@@ -252,15 +232,33 @@ export function openImageDimensionPopover(
   return close
 }
 
-export function openImageLightbox(doc: Document, src: string, alt: string): () => void {
+export function openImageLightbox(
+  doc: Document,
+  src: string,
+  alt: string,
+  isVideo = false
+): () => void {
   const overlay = doc.createElement('div')
   overlay.className = 'nt-img-lightbox forbid-edit'
 
-  const img = doc.createElement('img')
-  img.src = src
-  img.alt = alt
-  img.className = 'nt-img-lightbox-img forbid-edit'
-  img.addEventListener('click', (e) => e.stopPropagation())
+  let mediaEl: HTMLElement
+  if (isVideo) {
+    const video = doc.createElement('video')
+    video.src = normalizeVideoPlaybackUrl(src)
+    video.controls = true
+    video.playsInline = true
+    video.autoplay = true
+    video.className = 'nt-img-lightbox-img nt-img-lightbox-video forbid-edit'
+    video.addEventListener('click', (e) => e.stopPropagation())
+    mediaEl = video
+  } else {
+    const img = doc.createElement('img')
+    img.src = src
+    img.alt = alt
+    img.className = 'nt-img-lightbox-img forbid-edit'
+    img.addEventListener('click', (e) => e.stopPropagation())
+    mediaEl = img
+  }
 
   const closeBtn = doc.createElement('button')
   closeBtn.type = 'button'
@@ -291,14 +289,14 @@ export function openImageLightbox(doc: Document, src: string, alt: string): () =
   })
 
   doc.addEventListener('keydown', onKey, true)
-  overlay.append(img, closeBtn)
+  overlay.append(mediaEl, closeBtn)
   doc.body.appendChild(overlay)
   return close
 }
 
 export interface CornerResizeOptions {
   doc: Document
-  imgEl: HTMLImageElement
+  imgEl: HTMLImageElement | HTMLVideoElement
   wrapEl: HTMLElement
   handleEl: HTMLElement
   initialWidth?: number
@@ -316,11 +314,15 @@ export function attachImageCornerResize(opts: CornerResizeOptions): void {
     downEv.stopPropagation()
 
     const rect = imgEl.getBoundingClientRect()
-    const startW = Math.max(24, Math.round(rect.width || initialWidth || imgEl.naturalWidth || 180))
-    const startH = Math.max(24, Math.round(rect.height || initialHeight || imgEl.naturalHeight || 120))
+    const intrinsicW =
+      imgEl instanceof HTMLVideoElement ? imgEl.videoWidth : imgEl.naturalWidth
+    const intrinsicH =
+      imgEl instanceof HTMLVideoElement ? imgEl.videoHeight : imgEl.naturalHeight
+    const startW = Math.max(24, Math.round(rect.width || initialWidth || intrinsicW || 180))
+    const startH = Math.max(24, Math.round(rect.height || initialHeight || intrinsicH || 120))
     const ratio =
-      imgEl.naturalWidth > 0 && imgEl.naturalHeight > 0
-        ? imgEl.naturalWidth / imgEl.naturalHeight
+      intrinsicW > 0 && intrinsicH > 0
+        ? intrinsicW / intrinsicH
         : startW / startH
 
     const startX = downEv.clientX

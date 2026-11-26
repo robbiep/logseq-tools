@@ -4,7 +4,7 @@ import {
   serializeBlockSegments,
   type TableData,
 } from '../markdown/tableParser'
-import { TableHistory } from '../ui/tableHistory'
+import { getUndoRedoAction, TableHistory } from '../ui/tableHistory'
 import { TableView } from '../ui/tableView'
 import { type PageSearchResult } from './pageIndex'
 
@@ -154,13 +154,9 @@ export class DomObserver {
   }
 
   private handleDocumentKeyDown(e: KeyboardEvent): void {
-    if (this.destroyed || e.altKey) return
-    const key = e.key.toLowerCase()
-    const isUndo = (e.metaKey || e.ctrlKey) && !e.shiftKey && key === 'z'
-    const isRedo =
-      ((e.metaKey || e.ctrlKey) && e.shiftKey && key === 'z') ||
-      (e.ctrlKey && !e.metaKey && !e.shiftKey && key === 'y')
-    if (!isUndo && !isRedo) return
+    if (this.destroyed) return
+    const action = getUndoRedoAction(e)
+    if (!action) return
 
     const target = e.target as HTMLElement | null
     if (
@@ -192,7 +188,7 @@ export class DomObserver {
     }
 
     if (!view) return
-    const handled = isUndo ? view.undo() : view.redo()
+    const handled = action === 'undo' ? view.undo() : view.redo()
     if (handled) {
       e.preventDefault()
       e.stopPropagation()

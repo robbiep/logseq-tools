@@ -11,6 +11,7 @@ export type ColumnType =
   | 'multi-select'
   | 'checkbox'
   | 'url'
+  | 'media'
 
 export function isTimestampColumnType(type: ColumnType): boolean {
   return type === 'created-time' || type === 'edited-time'
@@ -77,6 +78,7 @@ export const COLUMN_TYPE_LABELS: Record<ColumnType, string> = {
   'multi-select': 'Multi-select',
   checkbox: 'Checkbox',
   url: 'URL',
+  media: 'Media',
 }
 
 export const CALCULATION_LABELS: Record<ColumnCalculation, string> = {
@@ -172,8 +174,6 @@ export const OPTION_COLORS: OptionColor[] = [
   'gray',
 ]
 
-export const DEFAULT_COLUMN_SCHEMA: ColumnSchema = { type: 'text' }
-
 const VALID_COLUMN_TYPES = new Set<ColumnType>([
   'text',
   'number',
@@ -184,6 +184,7 @@ const VALID_COLUMN_TYPES = new Set<ColumnType>([
   'multi-select',
   'checkbox',
   'url',
+  'media',
 ])
 
 const VALID_OPTION_COLORS = new Set<OptionColor>(OPTION_COLORS)
@@ -699,24 +700,18 @@ export function computeColumnCalculation(
     return { label, value: String(total) }
   }
 
-  if (calc === 'count_empty') {
+  if (
+    calc === 'count_empty' ||
+    calc === 'count_not_empty' ||
+    calc === 'percent_empty' ||
+    calc === 'percent_not_empty'
+  ) {
     const emptyCount = cells.filter((c) => isCellEmptyForCalc(c, colType)).length
-    return { label, value: String(emptyCount) }
-  }
-
-  if (calc === 'count_not_empty') {
-    const nonEmpty = cells.filter((c) => !isCellEmptyForCalc(c, colType)).length
-    return { label, value: String(nonEmpty) }
-  }
-
-  if (calc === 'percent_empty') {
-    const emptyCount = cells.filter((c) => isCellEmptyForCalc(c, colType)).length
-    return { label, value: formatPercent(emptyCount, total) }
-  }
-
-  if (calc === 'percent_not_empty') {
-    const nonEmpty = cells.filter((c) => !isCellEmptyForCalc(c, colType)).length
-    return { label, value: formatPercent(nonEmpty, total) }
+    const nonEmptyCount = total - emptyCount
+    if (calc === 'count_empty') return { label, value: String(emptyCount) }
+    if (calc === 'count_not_empty') return { label, value: String(nonEmptyCount) }
+    if (calc === 'percent_empty') return { label, value: formatPercent(emptyCount, total) }
+    return { label, value: formatPercent(nonEmptyCount, total) }
   }
 
   if (calc === 'count_unique') {

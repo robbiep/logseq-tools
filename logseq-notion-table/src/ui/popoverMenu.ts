@@ -1,4 +1,5 @@
 import { createIcon, type IconName } from './icons'
+import { positionAnchoredElement, stopEvents, type AnchorRect } from './popoverPosition'
 
 export type PopoverMenuItem =
   | {
@@ -26,7 +27,7 @@ export function closeActivePopover(): void {
 
 export function openPopoverMenu(
   doc: Document,
-  anchor: { left: number; top: number; right?: number; bottom?: number },
+  anchor: AnchorRect,
   items: PopoverMenuItem[],
   onClose?: () => void
 ): () => void {
@@ -37,11 +38,7 @@ export function openPopoverMenu(
   menu.className = 'nt-popover forbid-edit'
   menu.setAttribute('role', 'menu')
 
-  const stop = (e: Event) => {
-    e.stopPropagation()
-  }
-  menu.addEventListener('mousedown', stop)
-  menu.addEventListener('click', stop)
+  stopEvents(menu, ['mousedown', 'click'])
 
   for (const item of items) {
     if (item.type === 'separator') {
@@ -110,23 +107,11 @@ export function openPopoverMenu(
   menu.style.top = '0px'
   doc.body.appendChild(menu)
 
-  // Position within viewport bounds
-  const rect = menu.getBoundingClientRect()
-  const vw = win.innerWidth || doc.documentElement.clientWidth || 1024
-  const vh = win.innerHeight || doc.documentElement.clientHeight || 768
-
-  let left = anchor.left
-  let top = anchor.bottom !== undefined ? anchor.bottom + 4 : anchor.top + 4
-
-  if (left + rect.width > vw - 8) {
-    left = Math.max(8, (anchor.right ?? anchor.left) - rect.width)
-  }
-  if (top + rect.height > vh - 8) {
-    top = Math.max(8, anchor.top - rect.height - 4)
-  }
-
-  menu.style.left = `${Math.max(8, left)}px`
-  menu.style.top = `${Math.max(8, top)}px`
+  positionAnchoredElement(doc, menu, anchor, {
+    margin: 8,
+    alignRightOnOverflow: true,
+    clampAboveToViewport: true,
+  })
   menu.style.visibility = 'visible'
 
   let closed = false

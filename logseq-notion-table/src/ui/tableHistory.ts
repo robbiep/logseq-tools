@@ -1,3 +1,4 @@
+import { cloneColumnSchema } from '../markdown/columnTypes'
 import { cloneFilter } from '../markdown/tableFilters'
 import type { TableData } from '../markdown/tableParser'
 
@@ -12,19 +13,26 @@ export interface HistoryEntry {
   colWidths?: Record<number, number>
 }
 
+export function getUndoRedoAction(e: KeyboardEvent): 'undo' | 'redo' | null {
+  if (e.altKey) return null
+  const key = e.key.toLowerCase()
+  if ((e.metaKey || e.ctrlKey) && !e.shiftKey && key === 'z') return 'undo'
+  if (
+    ((e.metaKey || e.ctrlKey) && e.shiftKey && key === 'z') ||
+    (e.ctrlKey && !e.metaKey && !e.shiftKey && key === 'y')
+  ) {
+    return 'redo'
+  }
+  return null
+}
+
 export function cloneTableData(table: TableData): TableData {
   return {
     headers: [...table.headers],
     alignments: [...table.alignments],
     rows: table.rows.map((r) => [...r]),
     ...(table.columns
-      ? {
-          columns: table.columns.map((c) => ({
-            type: c.type,
-            ...(c.options ? { options: c.options.map((o) => ({ ...o })) } : {}),
-            ...(c.calc ? { calc: c.calc } : {}),
-          })),
-        }
+      ? { columns: table.columns.map((c) => cloneColumnSchema(c)) }
       : {}),
     ...(table.filters && table.filters.length > 0
       ? { filters: table.filters.map(cloneFilter) }

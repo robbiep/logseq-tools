@@ -12,6 +12,7 @@ import {
   type ColumnCalculation,
   type ColumnSchema,
   type ColumnType,
+  type SelectOption,
 } from '../markdown/columnTypes'
 import {
   formatJournalDateLink,
@@ -36,6 +37,7 @@ import {
   extractDroppedImageUrl,
   formatImageMarkdown,
   isImageFile,
+  isMediaFile,
   measureImageFile,
   removeImageInRawText,
   updateImageDimensionsInRawText,
@@ -57,6 +59,7 @@ import {
   getVisibleTableSlice,
   insertColumn,
   insertRow,
+  isTableCalcVisible,
   moveColumn,
   moveRow,
   moveRowsWithMap,
@@ -95,8 +98,9 @@ import { createIcon, type IconName } from './icons'
 import { closeActiveImagePopover } from './imageControls'
 import { PageAutocompleteController } from './pageAutocomplete'
 import { closeActivePopover, openPopoverMenu, type PopoverMenuItem } from './popoverMenu'
+import { toAnchorRect, type AnchorRect } from './popoverPosition'
 import { closeActiveSelectPicker, openSelectPicker } from './selectPicker'
-import { cloneTableData, TableHistory, tablesEqual } from './tableHistory'
+import { cloneTableData, getUndoRedoAction, TableHistory, tablesEqual } from './tableHistory'
 
 export interface TableViewCallbacks {
   onCommit: (nextTable: TableData) => Promise<void> | void
@@ -176,7 +180,6 @@ export class TableView {
   private redoBtnEl: HTMLButtonElement | null = null
   private searchOpen = false
   private searchQuery = ''
-  private searchBarEl: HTMLElement | null = null
   private searchInputEl: HTMLInputElement | null = null
   private searchCountEl: HTMLElement | null = null
   private searchBtnEl: HTMLButtonElement | null = null
@@ -327,13 +330,20 @@ export class TableView {
       this.handleHostPasteEvent(e)
     }
 
-    const onDocCopy = (e: ClipboardEvent) => {
-      if (this.hostEl.contains(e.target as Node)) return
-      if (!this.hasSelection() || this.activeTextarea) return
+    const shouldHandleDocClipboard = (e: ClipboardEvent): boolean => {
+      if (this.hostEl.contains(e.target as Node)) return false
+      if (!this.hasSelection() || this.activeTextarea) return false
       const active = this.doc.activeElement
-      if (active && active !== this.doc.body && active !== this.doc.documentElement && !this.hostEl.contains(active)) {
-        return
-      }
+      return !(
+        active &&
+        active !== this.doc.body &&
+        active !== this.doc.documentElement &&
+        !this.hostEl.contains(active)
+      )
+    }
+
+    const onDocCopy = (e: ClipboardEvent) => {
+      if (!shouldHandleDocClipboard(e)) return
       const win = this.doc.defaultView || window
       const sel = win.getSelection?.()
       if (sel && !sel.isCollapsed) return
@@ -341,22 +351,12 @@ export class TableView {
     }
 
     const onDocCut = (e: ClipboardEvent) => {
-      if (this.hostEl.contains(e.target as Node)) return
-      if (!this.hasSelection() || this.activeTextarea) return
-      const active = this.doc.activeElement
-      if (active && active !== this.doc.body && active !== this.doc.documentElement && !this.hostEl.contains(active)) {
-        return
-      }
+      if (!shouldHandleDocClipboard(e)) return
       this.handleCutEvent(e)
     }
 
     const onDocPaste = (e: ClipboardEvent) => {
-      if (this.hostEl.contains(e.target as Node)) return
-      if (!this.hasSelection() || this.activeTextarea) return
-      const active = this.doc.activeElement
-      if (active && active !== this.doc.body && active !== this.doc.documentElement && !this.hostEl.contains(active)) {
-        return
-      }
+      if (!shouldHandleDocClipboard(e)) return
       this.handleHostPasteEvent(e)
     }
 
@@ -414,10 +414,7 @@ export class TableView {
           this.hostEl.classList.remove('nt-selecting')
           if (active) {
             this.selectRowsIntersectingY(startY, upEv.clientY)
-            this.suppressNextCellClick = true
-            setTimeout(() => {
-              this.suppressNextCellClick = false
-            }, 0)
+            this.suppressNextClick()
             this.focusScrollContainer()
           }
         }
@@ -458,8 +455,7 @@ export class TableView {
   }
 
   private isCalcRowVisible(): boolean {
-    if (typeof this.table.showCalc === 'boolean') return this.table.showCalc
-    return this.hasAnyCalculation()
+    return isTableCalcVisible(this.table)
   }
 
   private toggleCalcRow(): void {
@@ -470,14 +466,61 @@ export class TableView {
     return Boolean(this.table.locked)
   }
 
-  private toggleLock(): void {
-    this.flushActiveEdit(true)
+  private closeAllPopovers(): void {
     closeActivePopover()
     closeActiveAddColumnDialog()
     closeActiveDatePicker()
     closeActiveSelectPicker()
     closeActiveImagePopover()
     closeActiveFilterPopover()
+  }
+
+  private clearSaveTimer(): void {
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer)
+      this.saveTimer = null
+    }
+  }
+
+  private suppressNextClick(): void {
+    this.suppressNextCellClick = true
+    setTimeout(() => {
+      this.suppressNextCellClick = false
+    }, 0)
+  }
+
+  private getColumnTitle(colIdx: number): string {
+    return (this.table.headers[colIdx] || '').trim() || `Column ${colIdx + 1}`
+  }
+
+  private formatRowCount(shown: number, total: number): string {
+    return `${shown} of ${total} ${total === 1 ? 'row' : 'rows'}`
+  }
+
+  private preventMouseDown(el: HTMLElement): void {
+    el.addEventListener('mousedown', (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+    })
+  }
+
+  private buildRenamedOptionTable(
+    colIdx: number,
+    optionId: string,
+    oldLabel: string,
+    nextLabel: string,
+    nextOptions: SelectOption[]
+  ): TableData {
+    const preRenameOpts = nextOptions.map((o) =>
+      o.id === optionId ? { ...o, label: oldLabel } : { ...o }
+    )
+    const seeded = setColumnOptions(this.table, colIdx, preRenameOpts)
+    return renameColumnOption(seeded, colIdx, optionId, nextLabel, this.timestampOpts)
+  }
+
+  private toggleLock(): void {
+    this.flushActiveEdit(true)
+    this.closeAllPopovers()
     this.table = setTableLocked(this.table, !this.isLocked())
     this.render()
     void this.callbacks.onCommit(this.table)
@@ -524,10 +567,6 @@ export class TableView {
     this.activateCell(clampedRow, clampedCol, 'end')
   }
 
-  public getCurrentTable(): TableData {
-    return this.table
-  }
-
   public canUndo(): boolean {
     return this.history.canUndo()
   }
@@ -566,17 +605,8 @@ export class TableView {
 
   private applyHistoryStep(direction: 'undo' | 'redo'): boolean {
     if (this.destroyed) return false
-    closeActivePopover()
-    closeActiveAddColumnDialog()
-    closeActiveDatePicker()
-    closeActiveSelectPicker()
-    closeActiveImagePopover()
-    closeActiveFilterPopover()
-
-    if (this.saveTimer) {
-      clearTimeout(this.saveTimer)
-      this.saveTimer = null
-    }
+    this.closeAllPopovers()
+    this.clearSaveTimer()
 
     const wasEditing = this.activeTextarea !== null
     const curFocus = this.activeCell
@@ -623,25 +653,17 @@ export class TableView {
   public destroy(): void {
     if (this.destroyed) return
     this.destroyed = true
-    if (this.saveTimer) {
-      clearTimeout(this.saveTimer)
-      this.saveTimer = null
-    }
+    this.clearSaveTimer()
     this.autocomplete?.destroy()
     this.autocomplete = null
-    closeActivePopover()
-    closeActiveAddColumnDialog()
-    closeActiveImagePopover()
-    closeActiveDatePicker()
-    closeActiveSelectPicker()
-    closeActiveFilterPopover()
+    this.closeAllPopovers()
     for (const fn of this.cleanups) fn()
     this.cleanups = []
     this.hostEl.remove()
   }
 
   private scheduleCommit(): void {
-    if (this.saveTimer) clearTimeout(this.saveTimer)
+    this.clearSaveTimer()
     const snapshot = this.table
     this.saveTimer = setTimeout(() => {
       this.saveTimer = null
@@ -658,10 +680,7 @@ export class TableView {
     const prevVal = this.getCellValue(row, col)
     const changed = val !== prevVal || this.dirtyValue !== null
 
-    if (this.saveTimer) {
-      clearTimeout(this.saveTimer)
-      this.saveTimer = null
-    }
+    this.clearSaveTimer()
 
     if (changed) {
       this.table = updateCell(this.table, row, col, val, this.timestampOpts)
@@ -784,10 +803,7 @@ export class TableView {
         clearSearchBtn.type = 'button'
         clearSearchBtn.className = 'nt-empty-filter-clear-btn nt-empty-search-clear-btn forbid-edit'
         clearSearchBtn.textContent = 'Clear search'
-        clearSearchBtn.addEventListener('mousedown', (e) => {
-          e.preventDefault()
-          e.stopPropagation()
-        })
+        this.preventMouseDown(clearSearchBtn)
         clearSearchBtn.addEventListener('click', (e) => {
           e.preventDefault()
           e.stopPropagation()
@@ -801,10 +817,7 @@ export class TableView {
         clearBtn.type = 'button'
         clearBtn.className = 'nt-empty-filter-clear-btn forbid-edit'
         clearBtn.textContent = 'Clear filters'
-        clearBtn.addEventListener('mousedown', (e) => {
-          e.preventDefault()
-          e.stopPropagation()
-        })
+        this.preventMouseDown(clearBtn)
         clearBtn.addEventListener('click', (e) => {
           e.preventDefault()
           e.stopPropagation()
@@ -856,7 +869,6 @@ export class TableView {
     const prevScrollLeft = this.scrollEl?.scrollLeft ?? 0
     this.activeTextarea = null
     this.activeCell = null
-    this.searchBarEl = null
     this.searchInputEl = null
     this.searchCountEl = null
     this.searchBtnEl = null
@@ -915,7 +927,6 @@ export class TableView {
     }
     table.appendChild(colgroup)
 
-    // Header row
     const thead = this.doc.createElement('thead')
     const headTr = this.doc.createElement('tr')
     for (let c = 0; c < this.table.headers.length; c++) {
@@ -924,7 +935,6 @@ export class TableView {
     thead.appendChild(headTr)
     table.appendChild(thead)
 
-    // Body rows
     const tbody = this.buildTableBody(colgroup)
     table.appendChild(tbody)
     table.appendChild(this.buildCalcFooter())
@@ -1088,10 +1098,7 @@ export class TableView {
     bar.setAttribute('role', 'dialog')
     bar.setAttribute('aria-label', 'Bulk edit selected rows')
 
-    bar.addEventListener('mousedown', (e) => {
-      e.preventDefault()
-      e.stopPropagation()
-    })
+    this.preventMouseDown(bar)
     bar.addEventListener('click', (e) => {
       e.stopPropagation()
     })
@@ -1119,7 +1126,7 @@ export class TableView {
       addSep()
       for (const c of editableColIndices) {
         const schema = this.getColumnSchema(c)
-        const colName = (this.table.headers[c] || '').trim() || `Column ${c + 1}`
+        const colName = this.getColumnTitle(c)
         const btn = this.doc.createElement('button')
         btn.type = 'button'
         btn.className = 'nt-bulk-btn forbid-edit'
@@ -1167,8 +1174,8 @@ export class TableView {
     if (selectedRows.length === 0) return
 
     const schema = this.getColumnSchema(colIdx)
-    const colName = (this.table.headers[colIdx] || '').trim() || `Column ${colIdx + 1}`
-    const rect = anchorEl.getBoundingClientRect()
+    const colName = this.getColumnTitle(colIdx)
+    const anchor = toAnchorRect(anchorEl)
     const values = selectedRows.map((b) => this.table.rows[b]?.[colIdx] ?? '')
     const commonRaw = values.every((v) => v === values[0]) ? values[0] : ''
 
@@ -1181,7 +1188,7 @@ export class TableView {
       )
       openSelectPicker(
         this.doc,
-        { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom },
+        anchor,
         {
           multi: false,
           currentRaw: commonRaw,
@@ -1202,18 +1209,10 @@ export class TableView {
             this.applyStructuralOp(setColumnOptions(this.table, colIdx, nextOptions), null)
           },
           onRenameOption: (optionId, oldLabel, nextLabel, nextOptions) => {
-            const preRenameOpts = nextOptions.map((o) =>
-              o.id === optionId ? { ...o, label: oldLabel } : { ...o }
+            this.applyStructuralOp(
+              this.buildRenamedOptionTable(colIdx, optionId, oldLabel, nextLabel, nextOptions),
+              null
             )
-            const seeded = setColumnOptions(this.table, colIdx, preRenameOpts)
-            const renamed = renameColumnOption(
-              seeded,
-              colIdx,
-              optionId,
-              nextLabel,
-              this.timestampOpts
-            )
-            this.applyStructuralOp(renamed, null)
           },
         }
       )
@@ -1223,7 +1222,7 @@ export class TableView {
     if (schema.type === 'date') {
       openDatePicker(
         this.doc,
-        { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom },
+        anchor,
         {
           currentRaw: commonRaw,
           dateFormat: this.preferredDateFormat,
@@ -1258,7 +1257,7 @@ export class TableView {
       const allUnchecked = values.every((v) => !isCheckboxChecked(v))
       openPopoverMenu(
         this.doc,
-        { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom },
+        anchor,
         [
           { type: 'header', label: colName },
           {
@@ -1568,10 +1567,7 @@ export class TableView {
         span.textContent = label
         btn.appendChild(span)
       }
-      btn.addEventListener('mousedown', (e) => {
-        e.preventDefault()
-        e.stopPropagation()
-      })
+      this.preventMouseDown(btn)
       btn.addEventListener('click', (e) => {
         e.preventDefault()
         e.stopPropagation()
@@ -1630,7 +1626,6 @@ export class TableView {
       filterCount > 0,
       filterCount > 0 ? String(filterCount) : undefined
     )
-    filterBtn.className = 'nt-tb-btn forbid-edit' + (filterCount > 0 ? ' nt-active' : '')
     filterBtn.classList.add('nt-tb-filter-btn')
     bar.appendChild(filterBtn)
 
@@ -1717,10 +1712,7 @@ export class TableView {
     btn.title = 'Table is locked — click to unlock'
     btn.setAttribute('aria-label', 'Unlock table')
     btn.appendChild(createIcon(this.doc, 'lock', 12))
-    btn.addEventListener('mousedown', (e) => {
-      e.preventDefault()
-      e.stopPropagation()
-    })
+    this.preventMouseDown(btn)
     btn.addEventListener('click', (e) => {
       e.preventDefault()
       e.stopPropagation()
@@ -1743,32 +1735,30 @@ export class TableView {
     }
   }
 
-  private copyMarkdown(): void {
+  private copyTableExport(format: 'markdown' | 'csv'): void {
     this.flushActiveEdit(true)
+    const isMd = format === 'markdown'
     if (this.isFilteredOrSearched()) {
       const slice = getVisibleTableSlice(this.table, this.visibleBodyIndices)
       const count = slice.rows.length
+      const content = isMd ? serializeTable(slice) : tableToCsv(slice)
+      const label = isMd ? 'Markdown' : 'CSV'
       void this.copyText(
-        serializeTable(slice),
-        `Copied ${count} filtered ${count === 1 ? 'row' : 'rows'} as Markdown`
+        content,
+        `Copied ${count} filtered ${count === 1 ? 'row' : 'rows'} as ${label}`
       )
     } else {
-      void this.copyText(serializeTable(this.table), 'Copied Markdown table')
+      const content = isMd ? serializeTable(this.table) : tableToCsv(this.table)
+      void this.copyText(content, isMd ? 'Copied Markdown table' : 'Copied CSV')
     }
   }
 
+  private copyMarkdown(): void {
+    this.copyTableExport('markdown')
+  }
+
   private copyCsv(): void {
-    this.flushActiveEdit(true)
-    if (this.isFilteredOrSearched()) {
-      const slice = getVisibleTableSlice(this.table, this.visibleBodyIndices)
-      const count = slice.rows.length
-      void this.copyText(
-        tableToCsv(slice),
-        `Copied ${count} filtered ${count === 1 ? 'row' : 'rows'} as CSV`
-      )
-    } else {
-      void this.copyText(tableToCsv(this.table), 'Copied CSV')
-    }
+    this.copyTableExport('csv')
   }
 
   private buildSearchBar(): HTMLElement {
@@ -1809,10 +1799,7 @@ export class TableView {
       }
     })
 
-    clearBtn.addEventListener('mousedown', (e) => {
-      e.preventDefault()
-      e.stopPropagation()
-    })
+    this.preventMouseDown(clearBtn)
     clearBtn.addEventListener('click', (e) => {
       e.preventDefault()
       e.stopPropagation()
@@ -1820,7 +1807,6 @@ export class TableView {
     })
 
     bar.append(icon, input, countEl, clearBtn)
-    this.searchBarEl = bar
     this.searchInputEl = input
     this.searchCountEl = countEl
     this.syncSearchBarUI()
@@ -1830,13 +1816,9 @@ export class TableView {
   private syncSearchBarUI(): void {
     const hasQuery = this.searchQuery.trim().length > 0
     if (this.searchCountEl) {
-      if (hasQuery) {
-        const total = this.table.rows.length
-        const shown = this.visibleBodyIndices.length
-        this.searchCountEl.textContent = `${shown} of ${total} ${total === 1 ? 'row' : 'rows'}`
-      } else {
-        this.searchCountEl.textContent = ''
-      }
+      this.searchCountEl.textContent = hasQuery
+        ? this.formatRowCount(this.visibleBodyIndices.length, this.table.rows.length)
+        : ''
     }
     const searchActive = this.searchOpen || hasQuery
     if (this.searchBtnEl) {
@@ -1889,8 +1871,10 @@ export class TableView {
     this.syncSearchBarUI()
     const filterCountEl = this.hostEl.querySelector('.nt-filter-count')
     if (filterCountEl) {
-      const total = this.table.rows.length
-      filterCountEl.textContent = `${this.visibleBodyIndices.length} of ${total} ${total === 1 ? 'row' : 'rows'}`
+      filterCountEl.textContent = this.formatRowCount(
+        this.visibleBodyIndices.length,
+        this.table.rows.length
+      )
     }
     this.syncCopyButtonTitles()
     this.pruneStaleSelections()
@@ -1916,7 +1900,7 @@ export class TableView {
 
     for (const filter of this.table.filters || []) {
       const schema = this.getColumnSchema(filter.col)
-      const colName = (this.table.headers[filter.col] || '').trim() || `Column ${filter.col + 1}`
+      const colName = this.getColumnTitle(filter.col)
 
       const chip = this.doc.createElement('div')
       chip.className = 'nt-filter-chip forbid-edit'
@@ -2004,10 +1988,7 @@ export class TableView {
         }
       }
 
-      chipBtn.addEventListener('mousedown', (e) => {
-        e.preventDefault()
-        e.stopPropagation()
-      })
+      this.preventMouseDown(chipBtn)
       chipBtn.addEventListener('click', (e) => {
         e.preventDefault()
         e.stopPropagation()
@@ -2020,10 +2001,7 @@ export class TableView {
       rmBtn.title = `Remove filter on ${colName}`
       rmBtn.setAttribute('aria-label', `Remove filter on ${colName}`)
       rmBtn.appendChild(createIcon(this.doc, 'x', 11))
-      rmBtn.addEventListener('mousedown', (e) => {
-        e.preventDefault()
-        e.stopPropagation()
-      })
+      this.preventMouseDown(rmBtn)
       rmBtn.addEventListener('click', (e) => {
         e.preventDefault()
         e.stopPropagation()
@@ -2042,10 +2020,7 @@ export class TableView {
     const addLbl = this.doc.createElement('span')
     addLbl.textContent = 'Filter'
     addBtn.appendChild(addLbl)
-    addBtn.addEventListener('mousedown', (e) => {
-      e.preventDefault()
-      e.stopPropagation()
-    })
+    this.preventMouseDown(addBtn)
     addBtn.addEventListener('click', (e) => {
       e.preventDefault()
       e.stopPropagation()
@@ -2059,18 +2034,13 @@ export class TableView {
     const count = this.doc.createElement('span')
     count.className = 'nt-filter-count'
     count.setAttribute('aria-live', 'polite')
-    const total = this.table.rows.length
-    const shown = this.visibleBodyIndices.length
-    count.textContent = `${shown} of ${total} ${total === 1 ? 'row' : 'rows'}`
+    count.textContent = this.formatRowCount(this.visibleBodyIndices.length, this.table.rows.length)
 
     const clearBtn = this.doc.createElement('button')
     clearBtn.type = 'button'
     clearBtn.className = 'nt-filter-clear-btn forbid-edit'
     clearBtn.textContent = 'Clear all'
-    clearBtn.addEventListener('mousedown', (e) => {
-      e.preventDefault()
-      e.stopPropagation()
-    })
+    this.preventMouseDown(clearBtn)
     clearBtn.addEventListener('click', (e) => {
       e.preventDefault()
       e.stopPropagation()
@@ -2085,13 +2055,12 @@ export class TableView {
 
   private openAddFilterMenu(anchorEl: HTMLElement): void {
     this.flushActiveEdit(true)
-    const rect = anchorEl.getBoundingClientRect()
     const activeCols = new Set((this.table.filters || []).map((f) => f.col))
     const items: PopoverMenuItem[] = [
       { type: 'header', label: 'Filter by Column' },
-      ...this.table.headers.map((h, colIdx): PopoverMenuItem => {
+      ...this.table.headers.map((_h, colIdx): PopoverMenuItem => {
         const schema = this.getColumnSchema(colIdx)
-        const name = (h || '').trim() || `Column ${colIdx + 1}`
+        const name = this.getColumnTitle(colIdx)
         return {
           label: name,
           icon: COLUMN_TYPE_ICONS[schema.type] || 'typeText',
@@ -2121,7 +2090,7 @@ export class TableView {
 
     openPopoverMenu(
       this.doc,
-      { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom },
+      toAnchorRect(anchorEl),
       items
     )
   }
@@ -2146,12 +2115,10 @@ export class TableView {
     isDraft: boolean
   ): void {
     this.flushActiveEdit(true)
-    const anchorRect = anchorEl.isConnected
-      ? anchorEl.getBoundingClientRect()
-      : this.hostEl.getBoundingClientRect()
+    const anchorTarget = anchorEl.isConnected ? anchorEl : this.hostEl
     const colIdx = filter.col
     const schema = this.getColumnSchema(colIdx)
-    const colName = (this.table.headers[colIdx] || '').trim() || `Column ${colIdx + 1}`
+    const colName = this.getColumnTitle(colIdx)
     const columnValues = this.table.rows.map((r) => r[colIdx] ?? '')
 
     const beforeSessionTable = cloneTableData(this.table)
@@ -2169,12 +2136,7 @@ export class TableView {
 
     openFilterPopover(
       this.doc,
-      {
-        left: anchorRect.left,
-        top: anchorRect.top,
-        right: anchorRect.right,
-        bottom: anchorRect.bottom,
-      },
+      toAnchorRect(anchorTarget),
       {
         filter: latestFilter,
         columnName: colName,
@@ -2197,10 +2159,7 @@ export class TableView {
           this.table = upsertTableFilter(this.table, latestFilter)
           this.render()
           if (immediate) {
-            if (this.saveTimer) {
-              clearTimeout(this.saveTimer)
-              this.saveTimer = null
-            }
+            this.clearSaveTimer()
             hasPendingSave = false
             void this.callbacks.onCommit(this.table)
           } else {
@@ -2209,10 +2168,7 @@ export class TableView {
           }
         },
         onDelete: () => {
-          if (this.saveTimer) {
-            clearTimeout(this.saveTimer)
-            this.saveTimer = null
-          }
+          this.clearSaveTimer()
           hasPendingSave = false
           if (committedInTable) {
             if (!historyRecorded) {
@@ -2226,10 +2182,7 @@ export class TableView {
         },
         onClose: () => {
           if (committedInTable && !isFilterComplete(latestFilter)) {
-            if (this.saveTimer) {
-              clearTimeout(this.saveTimer)
-              this.saveTimer = null
-            }
+            this.clearSaveTimer()
             hasPendingSave = false
             this.table = removeTableFilter(this.table, latestFilter.id)
             this.render()
@@ -2238,10 +2191,7 @@ export class TableView {
           }
           if (hasPendingSave) {
             hasPendingSave = false
-            if (this.saveTimer) {
-              clearTimeout(this.saveTimer)
-              this.saveTimer = null
-            }
+            this.clearSaveTimer()
             if (!this.destroyed) {
               void this.callbacks.onCommit(this.table)
             }
@@ -2343,6 +2293,10 @@ export class TableView {
         }
         if (colType === 'select' || colType === 'multi-select') {
           this.openSelectPickerForCell(cell, rowIdx, colIdx)
+          return
+        }
+        if (colType === 'media') {
+          this.openMediaFilePicker(cell, rowIdx, colIdx)
           return
         }
       }
@@ -2540,10 +2494,7 @@ export class TableView {
       if (downEv.shiftKey && this.cellSelection) {
         downEv.preventDefault()
         this.cellSelection = { ...this.cellSelection, focusRow: rowIdx, focusCol: colIdx }
-        this.suppressNextCellClick = true
-        setTimeout(() => {
-          this.suppressNextCellClick = false
-        }, 0)
+        this.suppressNextClick()
         this.syncSelectionUI()
         this.focusScrollContainer()
         return
@@ -2623,10 +2574,7 @@ export class TableView {
       const onUp = () => {
         cleanupDrag()
         if (dragging) {
-          this.suppressNextCellClick = true
-          setTimeout(() => {
-            this.suppressNextCellClick = false
-          }, 0)
+          this.suppressNextClick()
           this.focusScrollContainer()
         }
       }
@@ -2708,10 +2656,7 @@ export class TableView {
         cleanupDrag()
         if (dragging) {
           this.selectRowsIntersectingY(startY, upEv.clientY)
-          this.suppressNextCellClick = true
-          setTimeout(() => {
-            this.suppressNextCellClick = false
-          }, 0)
+          this.suppressNextClick()
           this.focusScrollContainer()
         } else if (!target.closest('.nt-row-gutter')) {
           this.clearSelection()
@@ -2790,11 +2735,10 @@ export class TableView {
 
   private openDatePickerForCell(cell: HTMLElement, rowIdx: number, colIdx: number): void {
     this.flushActiveEdit(true)
-    const rect = cell.getBoundingClientRect()
     const currentRaw = this.getCellValue(rowIdx, colIdx)
     openDatePicker(
       this.doc,
-      { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom },
+      toAnchorRect(cell),
       {
         currentRaw,
         dateFormat: this.preferredDateFormat,
@@ -2816,7 +2760,6 @@ export class TableView {
     manageOnly = false
   ): void {
     this.flushActiveEdit(true)
-    const rect = cell.getBoundingClientRect()
     const schema = this.getColumnSchema(colIdx)
     const multi = schema.type === 'multi-select'
     const harvestedOptions = harvestOptionsFromColumn(
@@ -2827,7 +2770,7 @@ export class TableView {
     )
     openSelectPicker(
       this.doc,
-      { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom },
+      toAnchorRect(cell),
       {
         multi,
         manageOnly,
@@ -2858,18 +2801,13 @@ export class TableView {
         },
         onRenameOption: (optionId, oldLabel, nextLabel, nextOptions) => {
           this.recordHistory(this.table, { row: rowIdx, col: colIdx })
-          const preRenameOpts = nextOptions.map((o) =>
-            o.id === optionId ? { ...o, label: oldLabel } : { ...o }
-          )
-          const seeded = setColumnOptions(this.table, colIdx, preRenameOpts)
-          const renamed = renameColumnOption(
-            seeded,
+          this.table = this.buildRenamedOptionTable(
             colIdx,
             optionId,
+            oldLabel,
             nextLabel,
-            this.timestampOpts
+            nextOptions
           )
-          this.table = renamed
           this.rerenderColumnBodyCells(colIdx)
           for (const bIdx of this.visibleBodyIndices) {
             this.refreshEditedTimeCellsInRow(bIdx + 1)
@@ -2911,10 +2849,7 @@ export class TableView {
       indBtn.title = `Edit filter on ${colTitle}`
       indBtn.setAttribute('aria-label', `Edit filter on ${colTitle}`)
       indBtn.appendChild(createIcon(this.doc, 'filter', 11))
-      indBtn.addEventListener('mousedown', (e) => {
-        e.preventDefault()
-        e.stopPropagation()
-      })
+      this.preventMouseDown(indBtn)
       indBtn.addEventListener('click', (e) => {
         e.preventDefault()
         e.stopPropagation()
@@ -2940,6 +2875,7 @@ export class TableView {
       display.className = 'nt-cell-display'
       display.appendChild(
         renderCellContent(this.doc, rawVal, {
+          renderImages: false,
           onPageClick: (p, shift) => this.callbacks.onPageClick(p, shift),
           onExternalLinkClick: this.callbacks.onExternalLinkClick,
         })
@@ -3007,10 +2943,7 @@ export class TableView {
         editBtn.title = 'Pick date'
         editBtn.setAttribute('aria-label', 'Pick date')
         editBtn.appendChild(createIcon(this.doc, 'edit', 12))
-        editBtn.addEventListener('mousedown', (e) => {
-          e.preventDefault()
-          e.stopPropagation()
-        })
+        this.preventMouseDown(editBtn)
         editBtn.addEventListener('click', (e) => {
           e.preventDefault()
           e.stopPropagation()
@@ -3090,11 +3023,6 @@ export class TableView {
         main.appendChild(a)
       } else if (rawVal.trim()) {
         main.appendChild(this.doc.createTextNode(rawVal.trim()))
-      } else {
-        const ph = this.doc.createElement('span')
-        ph.className = 'nt-cell-placeholder'
-        ph.textContent = 'https://…'
-        main.appendChild(ph)
       }
 
       if (this.isLocked()) {
@@ -3106,10 +3034,7 @@ export class TableView {
         editBtn.title = 'Edit URL'
         editBtn.setAttribute('aria-label', 'Edit URL')
         editBtn.appendChild(createIcon(this.doc, 'edit', 12))
-        editBtn.addEventListener('mousedown', (e) => {
-          e.preventDefault()
-          e.stopPropagation()
-        })
+        this.preventMouseDown(editBtn)
         editBtn.addEventListener('click', (e) => {
           e.preventDefault()
           e.stopPropagation()
@@ -3136,17 +3061,87 @@ export class TableView {
       return
     }
 
-    // Default: 'text'
     const locked = this.isLocked()
+    const mediaCallbacks = locked
+      ? {}
+      : {
+          onImageResize: (imageIdx: number, dims: { width?: number; height?: number }) => {
+            const nextRaw = updateImageDimensionsInRawText(
+              this.getCellValue(rowIdx, colIdx),
+              imageIdx,
+              dims
+            )
+            this.commitSingleCell(rowIdx, colIdx, nextRaw)
+          },
+          onImageRemove: (imageIdx: number) => {
+            const nextRaw = removeImageInRawText(this.getCellValue(rowIdx, colIdx), imageIdx)
+            this.commitSingleCell(rowIdx, colIdx, nextRaw)
+          },
+        }
+
+    if (schema.type === 'media') {
+      const wrap = this.doc.createElement('div')
+      wrap.className = 'nt-cell-display nt-media-cell forbid-edit'
+      const frag = renderCellContent(this.doc, rawVal, {
+        readOnly: locked,
+        renderImages: true,
+        onPageClick: (pageName, shiftKey) => {
+          this.callbacks.onPageClick(pageName, shiftKey)
+        },
+        onExternalLinkClick: this.callbacks.onExternalLinkClick,
+        resolveAssetUrl: this.callbacks.onResolveAssetUrl,
+        ...mediaCallbacks,
+      })
+      wrap.appendChild(frag)
+
+      if (!locked) {
+        const cellActions = this.doc.createElement('span')
+        cellActions.className = 'nt-media-cell-actions forbid-edit'
+
+        const addBtn = this.doc.createElement('button')
+        addBtn.type = 'button'
+        addBtn.className = 'nt-cell-edit-btn nt-media-add-btn forbid-edit'
+        addBtn.title = 'Add image or video'
+        addBtn.setAttribute('aria-label', 'Add image or video')
+        addBtn.appendChild(createIcon(this.doc, 'plus', 12))
+        this.preventMouseDown(addBtn)
+        addBtn.addEventListener('click', (e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          this.openMediaFilePicker(cell, rowIdx, colIdx)
+        })
+
+        const editBtn = this.doc.createElement('button')
+        editBtn.type = 'button'
+        editBtn.className = 'nt-cell-edit-btn forbid-edit'
+        editBtn.title = 'Edit media Markdown'
+        editBtn.setAttribute('aria-label', 'Edit media Markdown')
+        editBtn.appendChild(createIcon(this.doc, 'edit', 12))
+        this.preventMouseDown(editBtn)
+        editBtn.addEventListener('click', (e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          this.activateCell(rowIdx, colIdx, 'end')
+        })
+
+        cellActions.append(addBtn, editBtn)
+        wrap.appendChild(cellActions)
+      }
+
+      cell.insertBefore(wrap, cell.firstChild)
+      return
+    }
+
+    // Default: 'text'
     const display = this.doc.createElement('div')
     display.className = 'nt-cell-display'
     const frag = renderCellContent(this.doc, rawVal, {
       readOnly: locked,
+      renderImages: false,
       onPageClick: (pageName, shiftKey) => {
         this.callbacks.onPageClick(pageName, shiftKey)
       },
       onExternalLinkClick: this.callbacks.onExternalLinkClick,
-      resolveAssetUrl: this.callbacks.onResolveAssetUrl,
       ...(locked
         ? {}
         : {
@@ -3156,18 +3151,6 @@ export class TableView {
                 cbIdx,
                 checked
               )
-              this.commitSingleCell(rowIdx, colIdx, nextRaw)
-            },
-            onImageResize: (imageIdx: number, dims: { width?: number; height?: number }) => {
-              const nextRaw = updateImageDimensionsInRawText(
-                this.getCellValue(rowIdx, colIdx),
-                imageIdx,
-                dims
-              )
-              this.commitSingleCell(rowIdx, colIdx, nextRaw)
-            },
-            onImageRemove: (imageIdx: number) => {
-              const nextRaw = removeImageInRawText(this.getCellValue(rowIdx, colIdx), imageIdx)
               this.commitSingleCell(rowIdx, colIdx, nextRaw)
             },
           }),
@@ -3186,7 +3169,27 @@ export class TableView {
   }
 
   private canAcceptImageInCell(rowIdx: number, colIdx: number): boolean {
-    return !this.isLocked() && rowIdx >= 1 && this.getColumnSchema(colIdx).type === 'text'
+    return !this.isLocked() && rowIdx >= 1 && this.getColumnSchema(colIdx).type === 'media'
+  }
+
+  private openMediaFilePicker(cell: HTMLElement, rowIdx: number, colIdx: number): void {
+    if (!this.canAcceptImageInCell(rowIdx, colIdx)) return
+    this.flushActiveEdit(true)
+    const input = this.doc.createElement('input')
+    input.type = 'file'
+    input.accept = 'image/*,video/*'
+    input.multiple = true
+    input.className = 'nt-media-file-input forbid-edit'
+    input.style.display = 'none'
+    input.addEventListener('change', () => {
+      const files = Array.from(input.files || []).filter(isMediaFile)
+      input.remove()
+      if (files.length > 0) {
+        void this.saveMediaFilesToCell(rowIdx, colIdx, cell, files)
+      }
+    })
+    this.doc.body.appendChild(input)
+    input.click()
   }
 
   private attachCellImageDrop(cell: HTMLElement, rowIdx: number, colIdx: number): void {
@@ -3239,57 +3242,49 @@ export class TableView {
     })
   }
 
-  private async handleImageDropData(
+  private async saveMediaFilesToCell(
     rowIdx: number,
     colIdx: number,
     cell: HTMLElement,
-    dt: DataTransfer | null | undefined
+    files: File[]
   ): Promise<void> {
-    if (!dt) return
-    const files = Array.from(dt.files || []).filter(isImageFile)
+    if (!this.callbacks.onSaveImageAsset) {
+      this.callbacks.onCopyToast?.('Media storage is unavailable in this environment')
+      return
+    }
     const snippets: string[] = []
     const cellRect = cell.getBoundingClientRect()
     const cellWidth = cellRect.width > 0 ? cellRect.width : undefined
 
-    if (files.length > 0) {
-      if (!this.callbacks.onSaveImageAsset) {
-        this.callbacks.onCopyToast?.('Image storage is unavailable in this environment')
-        return
-      }
-      for (const file of files) {
-        try {
-          const [measured, saved] = await Promise.all([
-            measureImageFile(file),
-            this.callbacks.onSaveImageAsset(file),
-          ])
-          const dims = computeSmartImageSize({
-            naturalWidth: measured?.width ?? 0,
-            naturalHeight: measured?.height ?? 0,
-            maxWidth: this.defaultImageMaxWidth,
-            maxHeight: this.defaultImageMaxHeight,
-            cellWidth,
-          })
-          const alt = (file.name || 'image').replace(/\.[^.]+$/, '') || 'image'
-          snippets.push(formatImageMarkdown(alt, saved.markdownPath, dims))
-        } catch (err) {
-          console.error('[logseq-notion-table] Failed to save dropped image:', err)
-          this.callbacks.onCopyToast?.('Failed to save dropped image')
-        }
-      }
-    } else {
-      const url = extractDroppedImageUrl(dt)
-      if (url) {
+    for (const file of files) {
+      try {
+        const [measured, saved] = await Promise.all([
+          isImageFile(file) ? measureImageFile(file) : Promise.resolve(null),
+          this.callbacks.onSaveImageAsset(file),
+        ])
         const dims = computeSmartImageSize({
-          naturalWidth: 0,
-          naturalHeight: 0,
+          naturalWidth: measured?.width ?? 0,
+          naturalHeight: measured?.height ?? 0,
           maxWidth: this.defaultImageMaxWidth,
           maxHeight: this.defaultImageMaxHeight,
           cellWidth,
         })
-        snippets.push(formatImageMarkdown('image', url, dims))
+        const alt = (file.name || 'media').replace(/\.[^.]+$/, '') || 'media'
+        snippets.push(formatImageMarkdown(alt, saved.markdownPath, dims))
+      } catch (err) {
+        console.error('[logseq-notion-table] Failed to save media file:', err)
+        this.callbacks.onCopyToast?.('Failed to save media file')
       }
     }
 
+    this.insertMediaSnippetsIntoCell(rowIdx, colIdx, snippets)
+  }
+
+  private insertMediaSnippetsIntoCell(
+    rowIdx: number,
+    colIdx: number,
+    snippets: string[]
+  ): void {
     if (snippets.length === 0) return
 
     const joined = snippets.join('\n')
@@ -3319,6 +3314,33 @@ export class TableView {
     this.commitSingleCell(rowIdx, colIdx, nextVal)
   }
 
+  private async handleImageDropData(
+    rowIdx: number,
+    colIdx: number,
+    cell: HTMLElement,
+    dt: DataTransfer | null | undefined
+  ): Promise<void> {
+    if (!dt) return
+    const files = Array.from(dt.files || []).filter(isMediaFile)
+    if (files.length > 0) {
+      await this.saveMediaFilesToCell(rowIdx, colIdx, cell, files)
+      return
+    }
+
+    const url = extractDroppedImageUrl(dt)
+    if (!url) return
+    const cellRect = cell.getBoundingClientRect()
+    const cellWidth = cellRect.width > 0 ? cellRect.width : undefined
+    const dims = computeSmartImageSize({
+      naturalWidth: 0,
+      naturalHeight: 0,
+      maxWidth: this.defaultImageMaxWidth,
+      maxHeight: this.defaultImageMaxHeight,
+      cellWidth,
+    })
+    this.insertMediaSnippetsIntoCell(rowIdx, colIdx, [formatImageMarkdown('media', url, dims)])
+  }
+
   private buildColHandle(colIdx: number): HTMLElement {
     const btn = this.doc.createElement('button')
     btn.type = 'button'
@@ -3342,10 +3364,9 @@ export class TableView {
           : [],
       onClick: () => {
         btn.classList.add('nt-handle-open')
-        const rect = btn.getBoundingClientRect()
         openPopoverMenu(
           this.doc,
-          { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom },
+          toAnchorRect(btn),
           this.buildColMenuItems(colIdx),
           () => btn.classList.remove('nt-handle-open')
         )
@@ -3420,18 +3441,14 @@ export class TableView {
     btn.appendChild(createIcon(this.doc, 'grip', 11))
 
     if (rowIdx === 0) {
-      btn.addEventListener('mousedown', (e) => {
-        e.preventDefault()
-        e.stopPropagation()
-      })
+      this.preventMouseDown(btn)
       btn.addEventListener('click', (e) => {
         e.preventDefault()
         e.stopPropagation()
         btn.classList.add('nt-handle-open')
-        const rect = btn.getBoundingClientRect()
         openPopoverMenu(
           this.doc,
-          { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom },
+          toAnchorRect(btn),
           this.buildRowMenuItems(0),
           () => btn.classList.remove('nt-handle-open')
         )
@@ -3467,19 +3484,15 @@ export class TableView {
       createDragGhost: (sourceEls) => this.buildRowDragGhost(sourceEls),
       onClick: () => {
         btn.classList.add('nt-handle-open')
-        const rect = btn.getBoundingClientRect()
         openPopoverMenu(
           this.doc,
-          { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom },
+          toAnchorRect(btn),
           this.buildRowMenuItems(rowIdx),
           () => btn.classList.remove('nt-handle-open')
         )
       },
       onReorder: (_fromVis, _toVis, insertBeforeVis) => {
-        this.suppressNextCellClick = true
-        setTimeout(() => {
-          this.suppressNextCellClick = false
-        }, 0)
+        this.suppressNextClick()
 
         const movingBodyIndices = getDraggedBodyIndices()
         if (movingBodyIndices.length === 0 || this.visibleBodyIndices.length === 0) return
@@ -3685,10 +3698,7 @@ export class TableView {
     btn.title = 'Add row'
     btn.setAttribute('aria-label', 'Add row')
     btn.appendChild(createIcon(this.doc, 'plus', 12))
-    btn.addEventListener('mousedown', (e) => {
-      e.preventDefault()
-      e.stopPropagation()
-    })
+    this.preventMouseDown(btn)
     btn.addEventListener('click', (e) => {
       e.preventDefault()
       e.stopPropagation()
@@ -3753,10 +3763,7 @@ export class TableView {
     btn.title = 'Add column'
     btn.setAttribute('aria-label', 'Add column')
     btn.appendChild(createIcon(this.doc, 'plus', 12))
-    btn.addEventListener('mousedown', (e) => {
-      e.preventDefault()
-      e.stopPropagation()
-    })
+    this.preventMouseDown(btn)
     btn.addEventListener('click', (e) => {
       e.preventDefault()
       e.stopPropagation()
@@ -4101,7 +4108,7 @@ export class TableView {
         td.classList.add('nt-align-right')
       }
 
-      const colTitle = (this.table.headers[c] || '').trim() || `Column ${c + 1}`
+      const colTitle = this.getColumnTitle(c)
       const curCalc: ColumnCalculation = schema.calc || 'none'
 
       const locked = this.isLocked()
@@ -4139,10 +4146,7 @@ export class TableView {
         btn.appendChild(ph)
       }
 
-      btn.addEventListener('mousedown', (e) => {
-        e.preventDefault()
-        e.stopPropagation()
-      })
+      this.preventMouseDown(btn)
       btn.addEventListener('click', (e) => {
         e.preventDefault()
         e.stopPropagation()
@@ -4178,17 +4182,13 @@ export class TableView {
     btn.setAttribute('aria-label', 'Calculate row options')
     btn.appendChild(createIcon(this.doc, 'grip', 11))
 
-    btn.addEventListener('mousedown', (e) => {
-      e.preventDefault()
-      e.stopPropagation()
-    })
+    this.preventMouseDown(btn)
     btn.addEventListener('click', (e) => {
       e.preventDefault()
       e.stopPropagation()
       btn.classList.add('nt-handle-open')
-      const rect = btn.getBoundingClientRect()
       this.openCalcRowMenu(
-        { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom },
+        toAnchorRect(btn),
         () => btn.classList.remove('nt-handle-open')
       )
     })
@@ -4196,12 +4196,11 @@ export class TableView {
   }
 
   private openCalcRowMenu(
-    anchor: { left: number; top: number; right?: number; bottom?: number },
+    anchor: AnchorRect,
     onClose?: () => void
   ): void {
     this.flushActiveEdit(true)
     const hasCalc = this.hasAnyCalculation()
-    this.hostEl.classList.add('nt-calc-open')
     const items: PopoverMenuItem[] = [
       { type: 'header', label: 'Calculate Row' },
       {
@@ -4233,7 +4232,6 @@ export class TableView {
     ]
 
     openPopoverMenu(this.doc, anchor, items, () => {
-      this.hostEl.classList.remove('nt-calc-open')
       onClose?.()
     })
   }
@@ -4242,12 +4240,9 @@ export class TableView {
     this.flushActiveEdit(true)
     const schema = this.getColumnSchema(colIdx)
     const curCalc: ColumnCalculation = schema.calc || 'none'
-    const colTitle = (this.table.headers[colIdx] || '').trim() || `Column ${colIdx + 1}`
-    const rect = anchorEl.isConnected
-      ? anchorEl.getBoundingClientRect()
-      : this.hostEl.getBoundingClientRect()
+    const colTitle = this.getColumnTitle(colIdx)
+    const anchorTarget = anchorEl.isConnected ? anchorEl : this.hostEl
 
-    this.hostEl.classList.add('nt-calc-open')
     const choices = getCalculationsForColumnType(schema.type)
     const items: PopoverMenuItem[] = [
       { type: 'header', label: `Calculate · ${colTitle}` },
@@ -4274,14 +4269,7 @@ export class TableView {
       )
     }
 
-    openPopoverMenu(
-      this.doc,
-      { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom },
-      items,
-      () => {
-        this.hostEl.classList.remove('nt-calc-open')
-      }
-    )
+    openPopoverMenu(this.doc, toAnchorRect(anchorTarget), items)
   }
 
   private buildColFilterMenuItems(colIdx: number): PopoverMenuItem[] {
@@ -4473,7 +4461,7 @@ export class TableView {
     })
 
     textarea.addEventListener('paste', (e) => {
-      const files = Array.from(e.clipboardData?.files || []).filter(isImageFile)
+      const files = Array.from(e.clipboardData?.files || []).filter(isMediaFile)
       if (files.length > 0) {
         e.preventDefault()
         e.stopPropagation()
@@ -4523,22 +4511,11 @@ export class TableView {
     rowIdx: number,
     colIdx: number
   ): void {
-    if (!e.altKey) {
-      const k = e.key.toLowerCase()
-      const isUndo = (e.metaKey || e.ctrlKey) && !e.shiftKey && k === 'z'
-      const isRedo =
-        ((e.metaKey || e.ctrlKey) && e.shiftKey && k === 'z') ||
-        (e.ctrlKey && !e.metaKey && !e.shiftKey && k === 'y')
-      if (isUndo && this.undo()) {
-        e.preventDefault()
-        e.stopPropagation()
-        return
-      }
-      if (isRedo && this.redo()) {
-        e.preventDefault()
-        e.stopPropagation()
-        return
-      }
+    const historyAction = getUndoRedoAction(e)
+    if (historyAction && (historyAction === 'undo' ? this.undo() : this.redo())) {
+      e.preventDefault()
+      e.stopPropagation()
+      return
     }
 
     if (this.autocomplete?.handleKeyDown(e)) {
@@ -4610,7 +4587,6 @@ export class TableView {
       return
     }
 
-    // Escape: commit & exit cell edit
     if (e.key === 'Escape') {
       e.preventDefault()
       e.stopPropagation()

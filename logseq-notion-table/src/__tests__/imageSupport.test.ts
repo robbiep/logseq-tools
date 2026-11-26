@@ -5,12 +5,17 @@ import {
   extractDroppedImageUrl,
   formatImageMarkdown,
   isImageFile,
+  isMediaFile,
+  isVideoFile,
+  isVideoSrc,
+  normalizeVideoPlaybackUrl,
   parseImageMeta,
   removeImageInRawText,
   sanitizeImageFilename,
   updateImageDimensionsInRawText,
 } from '../markdown/imageUtils'
 import { renderCellContent } from '../markdown/inlineRenderer'
+import { openImageLightbox } from '../ui/imageControls'
 
 function createBlockDom(uuid: string): HTMLElement {
   const blockContent = document.createElement('div')
@@ -100,8 +105,17 @@ describe('imageUtils', () => {
     expect(isImageFile({ name: 'diagram.WEBP', type: '' })).toBe(true)
     expect(isImageFile({ name: 'notes.txt', type: 'text/plain' })).toBe(false)
 
+    expect(isVideoFile({ name: 'clip.mp4', type: 'video/mp4' })).toBe(true)
+    expect(isVideoFile({ name: 'recording.webm', type: '' })).toBe(true)
+    expect(isMediaFile({ name: 'clip.mp4', type: 'video/mp4' })).toBe(true)
+    expect(isMediaFile({ name: 'notes.txt', type: 'text/plain' })).toBe(false)
+    expect(isVideoSrc('../assets/storages/logseq-notion-table/clip.mp4')).toBe(true)
+    expect(isVideoSrc('../assets/storages/logseq-notion-table/pic.png')).toBe(false)
+
     const cleaned = sanitizeImageFilename('My Screen Shot (1).PNG', 'image/png')
     expect(cleaned).toMatch(/^My_Screen_Shot_1_\d+_[a-z0-9]+\.png$/)
+    const cleanedVideo = sanitizeImageFilename('Demo Clip.MP4', 'video/mp4')
+    expect(cleanedVideo).toMatch(/^Demo_Clip_\d+_[a-z0-9]+\.mp4$/)
 
     const mockDt = {
       getData: (type: string) =>
@@ -138,18 +152,45 @@ describe('inlineRenderer image support', () => {
     const removeBtn = div.querySelector('.nt-img-act-danger') as HTMLButtonElement
     removeBtn.click()
     expect(onImageRemove).toHaveBeenCalledWith(0)
+
+    // Videos render as inline <video controls>, and renderImages: false keeps Text cells free of media elements
+    const videoDiv = document.createElement('div')
+    videoDiv.appendChild(
+      renderCellContent(
+        document,
+        '![demo](../assets/storages/logseq-notion-table/demo.mp4){:width 220, :height 145}',
+        { resolveAssetUrl, renderImages: true }
+      )
+    )
+    await new Promise((r) => setTimeout(r, 10))
+    const videoEl = videoDiv.querySelector('video.nt-cell-video') as HTMLVideoElement
+    expect(videoEl).not.toBeNull()
+    expect(videoEl.controls).toBe(true)
+    expect(videoEl.src).toBe('file://graph/assets/storages/logseq-notion-table/demo.mp4')
+
+    const textOnlyDiv = document.createElement('div')
+    textOnlyDiv.appendChild(
+      renderCellContent(document, '![pic](../assets/pic.png)', { renderImages: false })
+    )
+    expect(textOnlyDiv.querySelector('img')).toBeNull()
+    expect(textOnlyDiv.textContent).toBe('![pic](../assets/pic.png)')
   })
 })
 
-describe('TableView drag-and-drop image & dimension customization', () => {
+describe('TableView Media column drag-and-drop, file upload, video & resize', () => {
   beforeEach(() => {
     document.body.innerHTML = ''
     localStorage.clear()
   })
 
-  it('accepts dropped image files, auto-sizes them, customizes dimensions via popover, and supports drag resize', async () => {
+  it('accepts dropped image files on Media cells, customizes dimensions via popover, and supports drag resize', async () => {
     const blocks: Record<string, string> = {
-      'uuid-img': '| Item | Preview |\n| --- | --- |\n| Logo |  |',
+      'uuid-img': [
+        '| Item | Preview |',
+        '| --- | --- |',
+        '| Logo |  |',
+        '<!-- nt-schema: {"v":1,"columns":[{"type":"text"},{"type":"media"}]} -->',
+      ].join('\n'),
     }
     const saveImageAsset = vi.fn(async () => ({
       markdownPath: '../assets/storages/logseq-notion-table/logo_1.png',
@@ -254,17 +295,17 @@ describe('TableView drag-and-drop image & dimension customization', () => {
     observer.destroy()
   })
 
-  it('allows image drops only on Text body cells and ignores Date/Select/Multi-select/Checkbox/URL cells', async () => {
+  it('allows media drops only on Media body cells and ignores Text/Date/Select/Multi-select/Checkbox/URL cells', async () => {
     const blocks: Record<string, string> = {
       'uuid-img-types': [
-        '| Notes | Due | Status | Tags | Done | Link |',
-        '| --- | --- | --- | --- | --- | --- |',
-        '|  |  |  |  |  |  |',
-        '<!-- nt-schema: {"v":1,"columns":[{"type":"text"},{"type":"date"},{"type":"select"},{"type":"multi-select"},{"type":"checkbox"},{"type":"url"}]} -->',
+        '| Notes | Due | Status | Tags | Done | Link | Media |',
+        '| --- | --- | --- | --- | --- | --- | --- |',
+        '|  |  |  |  |  |  |  |',
+        '<!-- nt-schema: {"v":1,"columns":[{"type":"text"},{"type":"date"},{"type":"select"},{"type":"multi-select"},{"type":"checkbox"},{"type":"url"},{"type":"media"}]} -->',
       ].join('\n'),
     }
-    const saveImageAsset = vi.fn(async () => ({
-      markdownPath: '../assets/storages/logseq-notion-table/only_text.png',
+    const saveImageAsset = vi.fn(async (file: File) => ({
+      markdownPath: `../assets/storages/logseq-notion-table/${file.name}`,
     }))
 
     document.body.appendChild(createBlockDom('uuid-img-types'))
@@ -291,15 +332,15 @@ describe('TableView drag-and-drop image & dimension customization', () => {
     const host = document.querySelector('.nt-host') as HTMLElement
     const file = new File(['png-bytes'], 'snap.png', { type: 'image/png' })
 
-    // Try dropping onto Date, Select, Multi-select, Checkbox, URL, and Header cell
-    const nonTextCells = [
-      host.querySelector('thead th[data-col="0"]') as HTMLElement,
-      ...([1, 2, 3, 4, 5].map(
+    // Try dropping onto Text, Date, Select, Multi-select, Checkbox, URL, and Header cell
+    const nonMediaCells = [
+      host.querySelector('thead th[data-col="6"]') as HTMLElement,
+      ...([0, 1, 2, 3, 4, 5].map(
         (c) => host.querySelector(`tbody tr td[data-col="${c}"]`) as HTMLElement
       )),
     ]
 
-    for (const cell of nonTextCells) {
+    for (const cell of nonMediaCells) {
       const dt = { types: ['Files'], files: [file], dropEffect: 'copy' } as unknown as DataTransfer
       const overEv = new Event('dragover', { bubbles: true, cancelable: true })
       Object.defineProperty(overEv, 'dataTransfer', { value: dt })
@@ -315,22 +356,65 @@ describe('TableView drag-and-drop image & dimension customization', () => {
     await new Promise((r) => setTimeout(r, 20))
     expect(saveImageAsset).not.toHaveBeenCalled()
 
-    // Dropping onto the Text body cell works
-    const textCell = host.querySelector('tbody tr td[data-col="0"]') as HTMLElement
-    const dtText = { types: ['Files'], files: [file], dropEffect: 'none' } as unknown as DataTransfer
-    const overText = new Event('dragover', { bubbles: true, cancelable: true })
-    Object.defineProperty(overText, 'dataTransfer', { value: dtText })
-    textCell.dispatchEvent(overText)
-    expect(textCell.classList.contains('nt-cell-drop-target')).toBe(true)
+    // Dropping onto the Media body cell works for both images and videos
+    const mediaCell = host.querySelector('tbody tr td[data-col="6"]') as HTMLElement
+    const videoFile = new File(['mp4-bytes'], 'demo.mp4', { type: 'video/mp4' })
+    const dtMedia = { types: ['Files'], files: [videoFile], dropEffect: 'none' } as unknown as DataTransfer
+    const overMedia = new Event('dragover', { bubbles: true, cancelable: true })
+    Object.defineProperty(overMedia, 'dataTransfer', { value: dtMedia })
+    mediaCell.dispatchEvent(overMedia)
+    expect(mediaCell.classList.contains('nt-cell-drop-target')).toBe(true)
 
-    const dropText = new Event('drop', { bubbles: true, cancelable: true })
-    Object.defineProperty(dropText, 'dataTransfer', { value: dtText })
-    textCell.dispatchEvent(dropText)
+    const dropMedia = new Event('drop', { bubbles: true, cancelable: true })
+    Object.defineProperty(dropMedia, 'dataTransfer', { value: dtMedia })
+    mediaCell.dispatchEvent(dropMedia)
 
     await new Promise((r) => setTimeout(r, 20))
     expect(saveImageAsset).toHaveBeenCalledTimes(1)
-    expect(blocks['uuid-img-types']).toContain('only_text.png')
+    expect(blocks['uuid-img-types']).toContain('demo.mp4')
+    expect(mediaCell.querySelector('video.nt-cell-video')).not.toBeNull()
 
     observer.destroy()
+  })
+
+  it('normalizes assets:// URLs to file:// for video playback while leaving images on assets://', async () => {
+    expect(normalizeVideoPlaybackUrl('assets:///Users/me/graph/assets/demo.mp4')).toBe(
+      'file:///Users/me/graph/assets/demo.mp4'
+    )
+    expect(normalizeVideoPlaybackUrl('https://cdn.example.com/demo.mp4')).toBe(
+      'https://cdn.example.com/demo.mp4'
+    )
+
+    const container = document.createElement('div')
+    container.appendChild(
+      renderCellContent(
+        document,
+        '![thumb](../assets/thumb.png) ![clip](../assets/clip.mp4)',
+        {
+          renderImages: true,
+          resolveAssetUrl: async (raw) =>
+            raw.replace('../', 'assets:///Users/me/graph/'),
+        }
+      )
+    )
+
+    await new Promise((r) => setTimeout(r, 10))
+
+    const img = container.querySelector('img.nt-cell-img') as HTMLImageElement
+    const video = container.querySelector('video.nt-cell-video') as HTMLVideoElement
+    expect(img.src).toBe('assets:///Users/me/graph/assets/thumb.png')
+    expect(video.src).toBe('file:///Users/me/graph/assets/clip.mp4')
+    expect(video.controls).toBe(true)
+    expect(video.playsInline).toBe(true)
+
+    const closeLightbox = openImageLightbox(
+      document,
+      'assets:///Users/me/graph/assets/clip.mp4',
+      'clip',
+      true
+    )
+    const lightboxVideo = document.querySelector('video.nt-img-lightbox-video') as HTMLVideoElement
+    expect(lightboxVideo.src).toBe('file:///Users/me/graph/assets/clip.mp4')
+    closeLightbox()
   })
 })

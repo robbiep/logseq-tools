@@ -8,6 +8,7 @@ import {
   type SelectOption,
 } from '../markdown/columnTypes'
 import { createIcon } from './icons'
+import { positionAnchoredElement, stopEvents, type AnchorRect } from './popoverPosition'
 
 export interface SelectPickerOptions {
   multi: boolean
@@ -37,12 +38,11 @@ export function closeActiveSelectPicker(): void {
 
 export function openSelectPicker(
   doc: Document,
-  anchor: { left: number; top: number; right?: number; bottom?: number },
+  anchor: AnchorRect,
   opts: SelectPickerOptions
 ): () => void {
   closeActiveSelectPicker()
 
-  const win = doc.defaultView || window
   let options: SelectOption[] = opts.options.map((o) => ({ ...o }))
   let selected = opts.manageOnly ? [] : parseSelectCellValues(opts.currentRaw, opts.multi)
   let editingOptionId: string | null = null
@@ -58,12 +58,7 @@ export function openSelectPicker(
   pop.setAttribute('role', 'dialog')
   pop.setAttribute('aria-label', opts.multi ? 'Multi-select options' : 'Select option')
 
-  const stop = (e: Event) => {
-    e.stopPropagation()
-  }
-  for (const evt of ['mousedown', 'mouseup', 'click', 'keydown', 'keyup', 'input']) {
-    pop.addEventListener(evt, stop)
-  }
+  stopEvents(pop, ['mousedown', 'mouseup', 'click', 'keydown', 'keyup', 'input'])
 
   const headerArea = doc.createElement('div')
   headerArea.className = 'nt-sp-top'
@@ -654,20 +649,7 @@ export function openSelectPicker(
   pop.style.top = '0px'
   doc.body.appendChild(pop)
 
-  const rect = pop.getBoundingClientRect()
-  const vw = win.innerWidth || doc.documentElement.clientWidth || 1024
-  const vh = win.innerHeight || doc.documentElement.clientHeight || 768
-
-  let left = anchor.left
-  let top = anchor.bottom !== undefined ? anchor.bottom + 4 : anchor.top + 4
-  if (left + rect.width > vw - 10) {
-    left = Math.max(8, vw - rect.width - 10)
-  }
-  if (top + rect.height > vh - 10 && anchor.top - rect.height - 4 >= 8) {
-    top = anchor.top - rect.height - 4
-  }
-  pop.style.left = `${Math.max(8, left)}px`
-  pop.style.top = `${Math.max(8, top)}px`
+  positionAnchoredElement(doc, pop, anchor)
   pop.style.visibility = 'visible'
 
   let closed = false

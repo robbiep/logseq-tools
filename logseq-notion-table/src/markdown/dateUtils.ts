@@ -87,6 +87,37 @@ function pad2(n: number): string {
   return String(n).padStart(2, '0')
 }
 
+const IN_REL_RE =
+  /^(?:in\s+|\+)(\d+)\s*(d|day|days|w|wk|wks|week|weeks|m|mo|mos|month|months)$/
+const AGO_REL_RE =
+  /^(?:-)?(\d+)\s*(d|day|days|w|wk|wks|week|weeks|m|mo|mos|month|months)(?:\s+ago)?$/
+const WEEKDAY_RE = /^(?:(next|last|this)\s+)?([a-z]+)$/
+
+function stripOuterBrackets(raw: string): string {
+  let clean = (raw || '').trim()
+  if (!clean) return ''
+  const bracketMatch = clean.match(/^\[\[(.+)\]\]$/)
+  if (bracketMatch) {
+    clean = bracketMatch[1].trim()
+  }
+  return clean
+}
+
+function parseShortYear(rawYear: string | undefined, fallbackYear: number): number {
+  if (!rawYear) return fallbackYear
+  const yNum = Number(rawYear)
+  return rawYear.length === 2 ? 2000 + yNum : yNum
+}
+
+export function isSameDay(a: Date | null, b: Date | null): boolean {
+  if (!a || !b) return false
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  )
+}
+
 function makeValidDate(year: number, monthIdx: number, day: number): Date | null {
   if (year < 1 || year > 9999 || monthIdx < 0 || monthIdx > 11 || day < 1 || day > 31) {
     return null
@@ -163,13 +194,7 @@ export function parseTimestamp(
   input: string,
   referenceDate: Date = new Date()
 ): Date | null {
-  let clean = (input || '').trim()
-  if (!clean) return null
-
-  const bracketMatch = clean.match(/^\[\[(.+)\]\]$/)
-  if (bracketMatch) {
-    clean = bracketMatch[1].trim()
-  }
+  const clean = stripOuterBrackets(input)
   if (!clean) return null
 
   // ISO-like datetime with optional seconds / timezone
@@ -239,13 +264,7 @@ export function parsePlaintextDate(
   input: string,
   referenceDate: Date = new Date()
 ): Date | null {
-  let clean = (input || '').trim()
-  if (!clean) return null
-
-  const bracketMatch = clean.match(/^\[\[(.+)\]\]$/)
-  if (bracketMatch) {
-    clean = bracketMatch[1].trim()
-  }
+  const clean = stripOuterBrackets(input)
   if (!clean) return null
 
   const ref = new Date(
@@ -267,7 +286,7 @@ export function parsePlaintextDate(
   }
 
   // "in N days/weeks/months" or "+Nd"
-  const inRelMatch = lower.match(/^(?:in\s+|\+)(\d+)\s*(d|day|days|w|wk|wks|week|weeks|m|mo|mos|month|months)$/)
+  const inRelMatch = lower.match(IN_REL_RE)
   if (inRelMatch) {
     const n = Number(inRelMatch[1])
     const unit = inRelMatch[2][0]
@@ -277,7 +296,7 @@ export function parsePlaintextDate(
   }
 
   // "N days/weeks/months ago" or "-Nd"
-  const agoRelMatch = lower.match(/^(?:-)?(\d+)\s*(d|day|days|w|wk|wks|week|weeks|m|mo|mos|month|months)(?:\s+ago)?$/)
+  const agoRelMatch = lower.match(AGO_REL_RE)
   if (agoRelMatch && (lower.startsWith('-') || lower.endsWith('ago'))) {
     const n = Number(agoRelMatch[1])
     const unit = agoRelMatch[2][0]
@@ -287,7 +306,7 @@ export function parsePlaintextDate(
   }
 
   // "next friday", "last monday", "friday"
-  const wdMatch = lower.match(/^(?:(next|last|this)\s+)?([a-z]+)$/)
+  const wdMatch = lower.match(WEEKDAY_RE)
   if (wdMatch && wdMatch[2] in WEEKDAY_ALIASES) {
     const targetDow = WEEKDAY_ALIASES[wdMatch[2]]
     const curDow = ref.getDay()
@@ -319,11 +338,7 @@ export function parsePlaintextDate(
   if (slashMatch) {
     const a = Number(slashMatch[1])
     const b = Number(slashMatch[2])
-    let year = ref.getFullYear()
-    if (slashMatch[3]) {
-      const yNum = Number(slashMatch[3])
-      year = slashMatch[3].length === 2 ? 2000 + yNum : yNum
-    }
+    const year = parseShortYear(slashMatch[3], ref.getFullYear())
     // If first number > 12, treat as DD/MM
     if (a > 12) {
       return makeValidDate(year, b - 1, a)
@@ -339,11 +354,7 @@ export function parsePlaintextDate(
     const mIdx = MONTH_ALIASES[monthFirstMatch[1].toLowerCase()]
     if (mIdx !== undefined) {
       const day = Number(monthFirstMatch[2])
-      let year = ref.getFullYear()
-      if (monthFirstMatch[3]) {
-        const yNum = Number(monthFirstMatch[3])
-        year = monthFirstMatch[3].length === 2 ? 2000 + yNum : yNum
-      }
+      const year = parseShortYear(monthFirstMatch[3], ref.getFullYear())
       return makeValidDate(year, mIdx, day)
     }
   }
@@ -356,11 +367,7 @@ export function parsePlaintextDate(
     const mIdx = MONTH_ALIASES[dayFirstMatch[2].toLowerCase()]
     if (mIdx !== undefined) {
       const day = Number(dayFirstMatch[1])
-      let year = ref.getFullYear()
-      if (dayFirstMatch[3]) {
-        const yNum = Number(dayFirstMatch[3])
-        year = dayFirstMatch[3].length === 2 ? 2000 + yNum : yNum
-      }
+      const year = parseShortYear(dayFirstMatch[3], ref.getFullYear())
       return makeValidDate(year, mIdx, day)
     }
   }
@@ -381,25 +388,21 @@ export function normalizeRelativeDateToken(input: string): string | null {
   if (lower === 'tomorrow' || lower === 'tom' || lower === 'tmr') return 'tomorrow'
   if (lower === 'yesterday' || lower === 'yest') return 'yesterday'
 
-  const inRelMatch = lower.match(
-    /^(?:in\s+|\+)(\d+)\s*(d|day|days|w|wk|wks|week|weeks|m|mo|mos|month|months)$/
-  )
+  const inRelMatch = lower.match(IN_REL_RE)
   if (inRelMatch) {
     const n = Number(inRelMatch[1])
     const unit = inRelMatch[2][0]
     return `+${n}${unit}`
   }
 
-  const agoRelMatch = lower.match(
-    /^(?:-)?(\d+)\s*(d|day|days|w|wk|wks|week|weeks|m|mo|mos|month|months)(?:\s+ago)?$/
-  )
+  const agoRelMatch = lower.match(AGO_REL_RE)
   if (agoRelMatch && (lower.startsWith('-') || lower.endsWith('ago'))) {
     const n = Number(agoRelMatch[1])
     const unit = agoRelMatch[2][0]
     return `-${n}${unit}`
   }
 
-  const wdMatch = lower.match(/^(?:(next|last|this)\s+)?([a-z]+)$/)
+  const wdMatch = lower.match(WEEKDAY_RE)
   if (wdMatch && wdMatch[2] in WEEKDAY_ALIASES) {
     return wdMatch[1] ? `${wdMatch[1]} ${wdMatch[2]}` : wdMatch[2]
   }

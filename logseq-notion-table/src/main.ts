@@ -3,7 +3,7 @@ import type { SettingSchemaDesc } from '@logseq/libs/dist/LSPlugin.user'
 import { DomObserver, type ObserverRuntimeOptions } from './host/domObserver'
 import { PageIndex } from './host/pageIndex'
 import { normalizeLogseqStartOfWeek } from './markdown/dateUtils'
-import { sanitizeImageFilename } from './markdown/imageUtils'
+import { isDirectAssetUrl, sanitizeImageFilename } from './markdown/imageUtils'
 import { createEmptyTable, serializeTable } from './markdown/tableParser'
 import { STYLES } from './styles'
 
@@ -128,13 +128,7 @@ async function main(): Promise<void> {
   const assetUrlCache = new Map<string, string>()
 
   const resolveAssetUrl = async (rawSrc: string): Promise<string> => {
-    if (
-      rawSrc.startsWith('http://') ||
-      rawSrc.startsWith('https://') ||
-      rawSrc.startsWith('data:') ||
-      rawSrc.startsWith('blob:') ||
-      rawSrc.startsWith('assets://')
-    ) {
+    if (isDirectAssetUrl(rawSrc)) {
       return rawSrc
     }
     const cached = assetUrlCache.get(rawSrc)
@@ -286,8 +280,6 @@ async function main(): Promise<void> {
     offGraph?.()
     observer.destroy()
   })
-
-  console.log('[logseq-notion-table] loaded')
 }
 
 logseq.ready(main).catch((err) => {

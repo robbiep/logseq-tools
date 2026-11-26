@@ -44,6 +44,8 @@ export type CheckboxFilterOp = 'checked' | 'unchecked'
 
 export type UrlFilterOp = 'contains' | 'not_contains' | 'is_empty' | 'is_not_empty'
 
+export type MediaFilterOp = 'is_empty' | 'is_not_empty'
+
 export type NumberFilterOp =
   | 'eq'
   | 'neq'
@@ -62,6 +64,7 @@ export type FilterOperator =
   | MultiSelectFilterOp
   | CheckboxFilterOp
   | UrlFilterOp
+  | MediaFilterOp
 
 export interface TableFilter {
   id: string
@@ -121,6 +124,10 @@ const OPERATORS_BY_TYPE: Record<ColumnType, Array<{ op: FilterOperator; label: s
   url: [
     { op: 'contains', label: 'contains' },
     { op: 'not_contains', label: 'does not contain' },
+    { op: 'is_empty', label: 'is empty' },
+    { op: 'is_not_empty', label: 'is not empty' },
+  ],
+  media: [
     { op: 'is_empty', label: 'is empty' },
     { op: 'is_not_empty', label: 'is not empty' },
   ],
@@ -192,7 +199,7 @@ export function isFilterComplete(filter: TableFilter): boolean {
 export function createDefaultFilter(col: number, type: ColumnType): TableFilter {
   const id = `flt_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`
   const defaultOp = getOperatorsForColumnType(type)[0].op
-  if (type === 'checkbox') {
+  if (type === 'checkbox' || type === 'media') {
     return { id, col, op: defaultOp }
   }
   if (type === 'select' || type === 'multi-select') {
@@ -417,7 +424,6 @@ export function matchesFilter(
     return op === 'not_contains' ? !matched : matched
   }
 
-  // Default: 'text'
   const needle = (typeof filter.value === 'string' ? filter.value : '').trim().toLowerCase()
   if (!needle) return true
   const searchable = extractSearchableText(raw)
@@ -488,16 +494,11 @@ export function buildPrefilledRowForFilters(
       continue
     }
 
-    if (colType === 'select' && filter.op === 'is' && Array.isArray(filter.value)) {
-      const first = filter.value.find((v) => v.trim().length > 0)
-      if (first) {
-        const opt = schema?.options?.find((o) => o.label.toLowerCase() === first.toLowerCase())
-        row[col] = formatSelectCellValues([{ label: opt?.label ?? first, isPage: opt?.isPage }])
-      }
-      continue
-    }
-
-    if (colType === 'multi-select' && filter.op === 'contains' && Array.isArray(filter.value)) {
+    if (
+      ((colType === 'select' && filter.op === 'is') ||
+        (colType === 'multi-select' && filter.op === 'contains')) &&
+      Array.isArray(filter.value)
+    ) {
       const first = filter.value.find((v) => v.trim().length > 0)
       if (first) {
         const opt = schema?.options?.find((o) => o.label.toLowerCase() === first.toLowerCase())

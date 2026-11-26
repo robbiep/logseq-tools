@@ -1,5 +1,6 @@
 import { COLUMN_TYPE_LABELS, type ColumnType } from '../markdown/columnTypes'
 import { createIcon, type IconName } from './icons'
+import { positionAnchoredElement, stopEvents, type AnchorRect } from './popoverPosition'
 
 export const COLUMN_TYPE_ICONS: Record<ColumnType, IconName> = {
   text: 'typeText',
@@ -11,6 +12,7 @@ export const COLUMN_TYPE_ICONS: Record<ColumnType, IconName> = {
   'multi-select': 'multiSelect',
   checkbox: 'checkbox',
   url: 'link',
+  media: 'image',
 }
 
 export const COLUMN_TYPE_CHOICES: ColumnType[] = [
@@ -21,6 +23,7 @@ export const COLUMN_TYPE_CHOICES: ColumnType[] = [
   'multi-select',
   'checkbox',
   'url',
+  'media',
   'created-time',
   'edited-time',
 ]
@@ -44,7 +47,7 @@ export function closeActiveAddColumnDialog(): void {
  */
 export function openAddColumnDialog(
   doc: Document,
-  anchor: { left: number; top: number; right?: number; bottom?: number },
+  anchor: AnchorRect,
   opts: AddColumnDialogOptions
 ): () => void {
   closeActiveAddColumnDialog()
@@ -55,12 +58,7 @@ export function openAddColumnDialog(
   dialog.setAttribute('role', 'dialog')
   dialog.setAttribute('aria-label', 'Add column')
 
-  const stop = (e: Event) => {
-    e.stopPropagation()
-  }
-  for (const evt of ['mousedown', 'mouseup', 'click', 'keydown', 'keyup', 'input', 'change']) {
-    dialog.addEventListener(evt, stop)
-  }
+  stopEvents(dialog, ['mousedown', 'mouseup', 'click', 'keydown', 'keyup', 'input', 'change'])
 
   const top = doc.createElement('div')
   top.className = 'nt-acd-top'
@@ -114,22 +112,12 @@ export function openAddColumnDialog(
   dialog.style.top = '0px'
   doc.body.appendChild(dialog)
 
-  const rect = dialog.getBoundingClientRect()
-  const vw = win.innerWidth || doc.documentElement.clientWidth || 1024
-  const vh = win.innerHeight || doc.documentElement.clientHeight || 768
-
-  let left = anchor.left
-  let topPos = anchor.bottom !== undefined ? anchor.bottom + 4 : anchor.top + 4
-  if (left + rect.width > vw - 8) {
-    left = Math.max(8, (anchor.right ?? anchor.left) - rect.width)
-  }
-  if (topPos + rect.height > vh - 8) {
-    const aboveTop = anchor.top - rect.height - 4
-    topPos = aboveTop >= 8 ? aboveTop : Math.max(8, vh - rect.height - 8)
-  }
-
-  dialog.style.left = `${Math.min(Math.max(8, left), Math.max(8, vw - rect.width - 8))}px`
-  dialog.style.top = `${Math.max(8, topPos)}px`
+  positionAnchoredElement(doc, dialog, anchor, {
+    margin: 8,
+    alignRightOnOverflow: true,
+    clampAboveToViewport: true,
+    clampLeftToViewport: true,
+  })
   dialog.style.visibility = 'visible'
   input.focus()
 

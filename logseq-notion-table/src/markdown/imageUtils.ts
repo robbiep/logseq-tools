@@ -3,14 +3,6 @@ export interface ImageDimensions {
   height?: number
 }
 
-export interface ParsedImageToken {
-  fullMatch: string
-  alt: string
-  src: string
-  width?: number
-  height?: number
-}
-
 export interface SmartSizeOptions {
   naturalWidth: number
   naturalHeight: number
@@ -32,6 +24,17 @@ const IMAGE_EXTS = new Set([
   '.avif',
 ])
 
+const VIDEO_EXTS = new Set([
+  '.mp4',
+  '.webm',
+  '.mov',
+  '.m4v',
+  '.ogv',
+  '.ogg',
+])
+
+const MEDIA_EXTS = new Set([...IMAGE_EXTS, ...VIDEO_EXTS])
+
 const MIME_TO_EXT: Record<string, string> = {
   'image/png': '.png',
   'image/jpeg': '.jpg',
@@ -41,6 +44,11 @@ const MIME_TO_EXT: Record<string, string> = {
   'image/svg+xml': '.svg',
   'image/bmp': '.bmp',
   'image/avif': '.avif',
+  'video/mp4': '.mp4',
+  'video/webm': '.webm',
+  'video/quicktime': '.mov',
+  'video/x-m4v': '.m4v',
+  'video/ogg': '.ogv',
 }
 
 /**
@@ -173,7 +181,41 @@ export function isImageFile(file: Pick<File, 'name' | 'type'>): boolean {
 }
 
 /**
- * Generate a safe, collision-resistant filename for storing an image asset.
+ * Check whether a File is a supported video by MIME type or filename extension.
+ */
+export function isVideoFile(file: Pick<File, 'name' | 'type'>): boolean {
+  if (file.type && file.type.toLowerCase().startsWith('video/')) {
+    return true
+  }
+  const name = (file.name || '').toLowerCase()
+  const dot = name.lastIndexOf('.')
+  if (dot !== -1) {
+    return VIDEO_EXTS.has(name.slice(dot))
+  }
+  return false
+}
+
+/**
+ * Check whether a File is a supported image or video.
+ */
+export function isMediaFile(file: Pick<File, 'name' | 'type'>): boolean {
+  return isImageFile(file) || isVideoFile(file)
+}
+
+/**
+ * Check whether a media src points to a video file or video data URL.
+ */
+export function isVideoSrc(src: string): boolean {
+  const trimmed = (src || '').trim().toLowerCase()
+  if (!trimmed) return false
+  if (trimmed.startsWith('data:video/')) return true
+  const pathOnly = trimmed.split(/[?#]/)[0]
+  const dot = pathOnly.lastIndexOf('.')
+  return dot !== -1 && VIDEO_EXTS.has(pathOnly.slice(dot))
+}
+
+/**
+ * Generate a safe, collision-resistant filename for storing an image or video asset.
  */
 export function sanitizeImageFilename(originalName: string, mimeType?: string): string {
   const rawName = (originalName || 'image').split(/[\\/]/).pop() || 'image'
@@ -181,7 +223,7 @@ export function sanitizeImageFilename(originalName: string, mimeType?: string): 
   let stem = dot > 0 ? rawName.slice(0, dot) : rawName
   let ext = dot > 0 ? rawName.slice(dot).toLowerCase() : ''
 
-  if (!ext || !IMAGE_EXTS.has(ext)) {
+  if (!ext || !MEDIA_EXTS.has(ext)) {
     ext = (mimeType && MIME_TO_EXT[mimeType.toLowerCase()]) || '.png'
   }
 
@@ -246,9 +288,9 @@ export function extractDroppedImageUrl(dt: DataTransfer | null | undefined): str
 
   const html = dt.getData?.('text/html') || ''
   if (html) {
-    const imgSrcMatch = html.match(/<img[^>]+src=["']([^"']+)["']/i)
-    if (imgSrcMatch && isSafeHttpUrl(imgSrcMatch[1])) {
-      return imgSrcMatch[1]
+    const mediaSrcMatch = html.match(/<(?:img|video)[^>]+src=["']([^"']+)["']/i)
+    if (mediaSrcMatch && isSafeHttpUrl(mediaSrcMatch[1])) {
+      return mediaSrcMatch[1]
     }
   }
 
@@ -260,7 +302,11 @@ export function extractDroppedImageUrl(dt: DataTransfer | null | undefined): str
   }
 
   const plain = (dt.getData?.('text/plain') || '').trim()
-  if (plain && isSafeHttpUrl(plain) && /\.(png|jpe?g|gif|webp|svg|bmp|avif)(?:\?.*)?$/i.test(plain)) {
+  if (
+    plain &&
+    isSafeHttpUrl(plain) &&
+    /\.(png|jpe?g|gif|webp|svg|bmp|avif|mp4|webm|mov|m4v|ogv|ogg)(?:\?.*)?$/i.test(plain)
+  ) {
     return plain
   }
 
@@ -276,14 +322,34 @@ function isSafeHttpUrl(url: string): boolean {
   }
 }
 
+export function isDirectAssetUrl(src: string): boolean {
+  return (
+    src.startsWith('http://') ||
+    src.startsWith('https://') ||
+    src.startsWith('file://') ||
+    src.startsWith('data:') ||
+    src.startsWith('blob:') ||
+    src.startsWith('assets://')
+  )
+}
+
 /**
- * Check whether an image src is safe to render inside a cell.
- * Allows http:, https:, assets:, blob:, data:image/*, and relative graph paths.
+ * Rewrite Logseq's `assets://` URLs to `file://` for HTML5 `<video>` playback.
+ * Electron registers `assets://` via a non-streaming file protocol that fails
+ * Chromium range/media requests, whereas Logseq's own media players use `file://`.
+ */
+export function normalizeVideoPlaybackUrl(src: string): string {
+  return src.startsWith('assets://') ? `file://${src.slice('assets://'.length)}` : src
+}
+
+/**
+ * Check whether a media src is safe to render inside a cell.
+ * Allows http:, https:, assets:, blob:, data:image/*, data:video/*, and relative graph paths.
  */
 export function isSafeImageSrc(src: string): boolean {
   const trimmed = (src || '').trim()
   if (!trimmed) return false
-  if (trimmed.startsWith('data:image/')) return true
+  if (trimmed.startsWith('data:image/') || trimmed.startsWith('data:video/')) return true
   if (trimmed.startsWith('assets://') || trimmed.startsWith('blob:')) return true
   if (trimmed.startsWith('../') || trimmed.startsWith('./') || trimmed.startsWith('assets/')) {
     return !trimmed.includes('..//')

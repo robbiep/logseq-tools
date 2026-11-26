@@ -140,37 +140,16 @@ function ensureRowMeta(table: TableData): RowTimestampMeta[] {
   return table.rowMeta
 }
 
-function stampCreatedColumns(
+function setTimestampColumns(
   row: string[],
   columns: ColumnSchema[] | undefined,
-  timestamp: string
+  type: 'created-time' | 'edited-time',
+  value: string
 ): void {
   if (!columns) return
   for (let c = 0; c < row.length; c++) {
-    if (columns[c]?.type === 'created-time') {
-      row[c] = timestamp
-    }
-  }
-}
-
-function stampEditedColumns(
-  row: string[],
-  columns: ColumnSchema[] | undefined,
-  timestamp: string
-): void {
-  if (!columns) return
-  for (let c = 0; c < row.length; c++) {
-    if (columns[c]?.type === 'edited-time') {
-      row[c] = timestamp
-    }
-  }
-}
-
-function clearEditedColumns(row: string[], columns: ColumnSchema[] | undefined): void {
-  if (!columns) return
-  for (let c = 0; c < row.length; c++) {
-    if (columns[c]?.type === 'edited-time') {
-      row[c] = ''
+    if (columns[c]?.type === type) {
+      row[c] = value
     }
   }
 }
@@ -183,7 +162,12 @@ function stampRowCreated(
 ): void {
   const meta = ensureRowMeta(table)
   meta[bodyIdx] = { ...(meta[bodyIdx] || {}), createdAt: tsMs }
-  stampCreatedColumns(table.rows[bodyIdx], table.columns, formatTimestamp(new Date(tsMs), dateFormat))
+  setTimestampColumns(
+    table.rows[bodyIdx],
+    table.columns,
+    'created-time',
+    formatTimestamp(new Date(tsMs), dateFormat)
+  )
 }
 
 function stampRowEdited(
@@ -194,7 +178,12 @@ function stampRowEdited(
 ): void {
   const meta = ensureRowMeta(table)
   meta[bodyIdx] = { ...(meta[bodyIdx] || {}), editedAt: tsMs }
-  stampEditedColumns(table.rows[bodyIdx], table.columns, formatTimestamp(new Date(tsMs), dateFormat))
+  setTimestampColumns(
+    table.rows[bodyIdx],
+    table.columns,
+    'edited-time',
+    formatTimestamp(new Date(tsMs), dateFormat)
+  )
 }
 
 /**
@@ -307,7 +296,7 @@ export function duplicateRow(
       next.rowMeta.unshift({})
     }
     if (!opts?.skipAutoTimestamps) {
-      clearEditedColumns(newRow, next.columns)
+      setTimestampColumns(newRow, next.columns, 'edited-time', '')
       stampRowCreated(next, 0, resolveTimestampMs(opts), opts?.dateFormat)
     }
     return next
@@ -320,7 +309,7 @@ export function duplicateRow(
     next.rowMeta.splice(bodyIdx + 1, 0, {})
   }
   if (!opts?.skipAutoTimestamps) {
-    clearEditedColumns(newRow, next.columns)
+    setTimestampColumns(newRow, next.columns, 'edited-time', '')
     stampRowCreated(next, bodyIdx + 1, resolveTimestampMs(opts), opts?.dateFormat)
   }
   return next

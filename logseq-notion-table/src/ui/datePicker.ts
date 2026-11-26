@@ -4,9 +4,127 @@ import {
   getMonthCalendarGrid,
   getMonthTitle,
   getWeekdayShortHeaders,
+  isSameDay,
   parsePlaintextDate,
 } from '../markdown/dateUtils'
 import { createIcon } from './icons'
+import { positionAnchoredElement, stopEvents, type AnchorRect } from './popoverPosition'
+
+export interface CalendarSection {
+  headerEl: HTMLElement
+  weekdaysEl: HTMLElement
+  gridEl: HTMLElement
+  setView: (year: number, month: number) => void
+  render: () => void
+}
+
+export function createCalendarSection(
+  doc: Document,
+  opts: {
+    initialYear: number
+    initialMonth: number
+    startOfWeek: number
+    today: Date
+    getSelectedDate: () => Date | null
+    onSelectDay: (date: Date) => void
+  }
+): CalendarSection {
+  let viewYear = opts.initialYear
+  let viewMonth = opts.initialMonth
+
+  const headerEl = doc.createElement('div')
+  headerEl.className = 'nt-dp-cal-header'
+
+  const prevBtn = doc.createElement('button')
+  prevBtn.type = 'button'
+  prevBtn.className = 'nt-dp-nav-btn forbid-edit'
+  prevBtn.setAttribute('aria-label', 'Previous month')
+  prevBtn.appendChild(createIcon(doc, 'chevronLeft', 14))
+
+  const monthTitle = doc.createElement('span')
+  monthTitle.className = 'nt-dp-month-title'
+
+  const nextBtn = doc.createElement('button')
+  nextBtn.type = 'button'
+  nextBtn.className = 'nt-dp-nav-btn forbid-edit'
+  nextBtn.setAttribute('aria-label', 'Next month')
+  nextBtn.appendChild(createIcon(doc, 'chevronRight', 14))
+
+  headerEl.append(prevBtn, monthTitle, nextBtn)
+
+  const weekdaysEl = doc.createElement('div')
+  weekdaysEl.className = 'nt-dp-weekdays'
+  for (const wd of getWeekdayShortHeaders(opts.startOfWeek)) {
+    const cell = doc.createElement('span')
+    cell.className = 'nt-dp-weekday'
+    cell.textContent = wd
+    weekdaysEl.appendChild(cell)
+  }
+
+  const gridEl = doc.createElement('div')
+  gridEl.className = 'nt-dp-grid'
+
+  const render = () => {
+    monthTitle.textContent = getMonthTitle(viewYear, viewMonth)
+    gridEl.textContent = ''
+    const selectedDate = opts.getSelectedDate()
+    const days = getMonthCalendarGrid(viewYear, viewMonth, opts.startOfWeek)
+    for (const item of days) {
+      const btn = doc.createElement('button')
+      btn.type = 'button'
+      btn.className = 'nt-dp-day forbid-edit'
+      btn.textContent = String(item.date.getDate())
+      btn.dataset.iso = formatLogseqDate(item.date, 'yyyy-MM-dd')
+      if (!item.inCurrentMonth) btn.classList.add('nt-dp-outside')
+      if (isSameDay(item.date, opts.today)) btn.classList.add('nt-dp-today')
+      if (isSameDay(item.date, selectedDate)) btn.classList.add('nt-dp-selected')
+
+      btn.addEventListener('mousedown', (e) => {
+        e.preventDefault()
+        e.stopPropagation()
+      })
+      btn.addEventListener('click', (e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        opts.onSelectDay(item.date)
+      })
+      gridEl.appendChild(btn)
+    }
+  }
+
+  prevBtn.addEventListener('click', (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    viewMonth--
+    if (viewMonth < 0) {
+      viewMonth = 11
+      viewYear--
+    }
+    render()
+  })
+
+  nextBtn.addEventListener('click', (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    viewMonth++
+    if (viewMonth > 11) {
+      viewMonth = 0
+      viewYear++
+    }
+    render()
+  })
+
+  return {
+    headerEl,
+    weekdaysEl,
+    gridEl,
+    setView: (year: number, month: number) => {
+      viewYear = year
+      viewMonth = month
+    },
+    render,
+  }
+}
 
 export interface DatePickerOptions {
   currentRaw: string
@@ -26,43 +144,26 @@ export function closeActiveDatePicker(): void {
   }
 }
 
-function isSameDay(a: Date | null, b: Date | null): boolean {
-  if (!a || !b) return false
-  return (
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate()
-  )
-}
-
 export function openDatePicker(
   doc: Document,
-  anchor: { left: number; top: number; right?: number; bottom?: number },
+  anchor: AnchorRect,
   opts: DatePickerOptions
 ): () => void {
   closeActiveDatePicker()
 
-  const win = doc.defaultView || window
   const today = new Date()
   const initialDate = parsePlaintextDate(opts.currentRaw, today)
 
   let selectedDate: Date | null = initialDate
-  let viewYear = (initialDate || today).getFullYear()
-  let viewMonth = (initialDate || today).getMonth()
+  const initialView = initialDate || today
 
   const pop = doc.createElement('div')
   pop.className = 'nt-date-popover forbid-edit'
   pop.setAttribute('role', 'dialog')
   pop.setAttribute('aria-label', 'Date picker')
 
-  const stop = (e: Event) => {
-    e.stopPropagation()
-  }
-  for (const evt of ['mousedown', 'mouseup', 'click', 'keydown', 'keyup', 'input']) {
-    pop.addEventListener(evt, stop)
-  }
+  stopEvents(pop, ['mousedown', 'mouseup', 'click', 'keydown', 'keyup', 'input'])
 
-  // Plaintext date input
   const inputWrap = doc.createElement('div')
   inputWrap.className = 'nt-dp-input-wrap'
 
@@ -95,106 +196,28 @@ export function openDatePicker(
   inputWrap.append(input, preview)
   pop.appendChild(inputWrap)
 
-  // Calendar header
-  const calHeader = doc.createElement('div')
-  calHeader.className = 'nt-dp-cal-header'
-
-  const prevBtn = doc.createElement('button')
-  prevBtn.type = 'button'
-  prevBtn.className = 'nt-dp-nav-btn forbid-edit'
-  prevBtn.setAttribute('aria-label', 'Previous month')
-  prevBtn.appendChild(createIcon(doc, 'chevronLeft', 14))
-
-  const monthTitle = doc.createElement('span')
-  monthTitle.className = 'nt-dp-month-title'
-
-  const nextBtn = doc.createElement('button')
-  nextBtn.type = 'button'
-  nextBtn.className = 'nt-dp-nav-btn forbid-edit'
-  nextBtn.setAttribute('aria-label', 'Next month')
-  nextBtn.appendChild(createIcon(doc, 'chevronRight', 14))
-
-  calHeader.append(prevBtn, monthTitle, nextBtn)
-  pop.appendChild(calHeader)
-
-  // Weekday headers
-  const weekdaysRow = doc.createElement('div')
-  weekdaysRow.className = 'nt-dp-weekdays'
-  for (const wd of getWeekdayShortHeaders(opts.startOfWeek)) {
-    const cell = doc.createElement('span')
-    cell.className = 'nt-dp-weekday'
-    cell.textContent = wd
-    weekdaysRow.appendChild(cell)
-  }
-  pop.appendChild(weekdaysRow)
-
-  // Calendar grid
-  const gridEl = doc.createElement('div')
-  gridEl.className = 'nt-dp-grid'
-  pop.appendChild(gridEl)
-
   const commitDate = (d: Date) => {
     close()
     opts.onSelect(formatJournalDateLink(d, opts.dateFormat))
   }
 
-  const renderCalendar = () => {
-    monthTitle.textContent = getMonthTitle(viewYear, viewMonth)
-    gridEl.textContent = ''
-    const days = getMonthCalendarGrid(viewYear, viewMonth, opts.startOfWeek)
-    for (const item of days) {
-      const btn = doc.createElement('button')
-      btn.type = 'button'
-      btn.className = 'nt-dp-day forbid-edit'
-      btn.textContent = String(item.date.getDate())
-      btn.dataset.iso = formatLogseqDate(item.date, 'yyyy-MM-dd')
-      if (!item.inCurrentMonth) btn.classList.add('nt-dp-outside')
-      if (isSameDay(item.date, today)) btn.classList.add('nt-dp-today')
-      if (isSameDay(item.date, selectedDate)) btn.classList.add('nt-dp-selected')
-
-      btn.addEventListener('mousedown', (e) => {
-        e.preventDefault()
-        e.stopPropagation()
-      })
-      btn.addEventListener('click', (e) => {
-        e.preventDefault()
-        e.stopPropagation()
-        commitDate(item.date)
-      })
-      gridEl.appendChild(btn)
-    }
-  }
-
-  prevBtn.addEventListener('click', (e) => {
-    e.preventDefault()
-    e.stopPropagation()
-    viewMonth--
-    if (viewMonth < 0) {
-      viewMonth = 11
-      viewYear--
-    }
-    renderCalendar()
+  const cal = createCalendarSection(doc, {
+    initialYear: initialView.getFullYear(),
+    initialMonth: initialView.getMonth(),
+    startOfWeek: opts.startOfWeek,
+    today,
+    getSelectedDate: () => selectedDate,
+    onSelectDay: (d) => commitDate(d),
   })
-
-  nextBtn.addEventListener('click', (e) => {
-    e.preventDefault()
-    e.stopPropagation()
-    viewMonth++
-    if (viewMonth > 11) {
-      viewMonth = 0
-      viewYear++
-    }
-    renderCalendar()
-  })
+  pop.append(cal.headerEl, cal.weekdaysEl, cal.gridEl)
 
   input.addEventListener('input', () => {
     const parsed = parsePlaintextDate(input.value, today)
     updatePreview(parsed, input.value)
     if (parsed) {
       selectedDate = parsed
-      viewYear = parsed.getFullYear()
-      viewMonth = parsed.getMonth()
-      renderCalendar()
+      cal.setView(parsed.getFullYear(), parsed.getMonth())
+      cal.render()
     }
   })
 
@@ -222,7 +245,6 @@ export function openDatePicker(
     }
   })
 
-  // Footer quick actions
   const footer = doc.createElement('div')
   footer.className = 'nt-dp-footer'
 
@@ -251,27 +273,14 @@ export function openDatePicker(
   pop.appendChild(footer)
 
   updatePreview(initialDate, strippedInitial)
-  renderCalendar()
+  cal.render()
 
   pop.style.visibility = 'hidden'
   pop.style.left = '0px'
   pop.style.top = '0px'
   doc.body.appendChild(pop)
 
-  const rect = pop.getBoundingClientRect()
-  const vw = win.innerWidth || doc.documentElement.clientWidth || 1024
-  const vh = win.innerHeight || doc.documentElement.clientHeight || 768
-
-  let left = anchor.left
-  let top = anchor.bottom !== undefined ? anchor.bottom + 4 : anchor.top + 4
-  if (left + rect.width > vw - 10) {
-    left = Math.max(8, vw - rect.width - 10)
-  }
-  if (top + rect.height > vh - 10 && anchor.top - rect.height - 4 >= 8) {
-    top = anchor.top - rect.height - 4
-  }
-  pop.style.left = `${Math.max(8, left)}px`
-  pop.style.top = `${Math.max(8, top)}px`
+  positionAnchoredElement(doc, pop, anchor)
   pop.style.visibility = 'visible'
 
   let closed = false
